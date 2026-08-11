@@ -330,6 +330,26 @@ select.inp:focus,input.inp:focus{border-color:var(--primary);box-shadow:0 0 0 3p
 /* pulse highlight on figures that just recalculated after an edit */
 @keyframes flashv{0%{background:#fde68a;box-shadow:0 0 0 5px #fde68a}55%{background:#fef3c7;box-shadow:0 0 0 3px #fef3c7}100%{background:transparent;box-shadow:none}}
 .flash-val{animation:flashv 1.4s ease;border-radius:6px}
+/* ---- Arabic / RTL support ---- */
+html[dir=rtl] body{font-family:"Cairo","Tajawal","Segoe UI",Tahoma,"Inter",Arial,sans-serif}
+html[dir=rtl] #sidebar{left:auto;right:0}
+html[dir=rtl] #main{margin-left:0;margin-right:236px}
+html[dir=rtl] #main.collapsed{margin-right:64px}
+html[dir=rtl] #sidebar.collapsed .nav-item .badge-n{right:auto;left:4px}
+html[dir=rtl] .nav-item .badge-n{margin-left:0;margin-right:auto}
+html[dir=rtl] .page-head .ph-actions{margin-left:0;margin-right:auto}
+html[dir=rtl] .card-h .right{margin-left:0;margin-right:auto}
+html[dir=rtl] .modal-h .x,html[dir=rtl] .drawer-h .x{margin-left:0;margin-right:auto}
+html[dir=rtl] .icon-act{margin-left:0;margin-right:4px}
+html[dir=rtl] .drawer{right:auto;left:0;transform:translateX(-100%)}
+html[dir=rtl] .drawer.open{transform:none}
+html[dir=rtl] #toasts{right:auto;left:22px}
+html[dir=rtl] .num,html[dir=rtl] th.num,html[dir=rtl] td.num{direction:ltr}
+html[dir=rtl] .calc-row .val,html[dir=rtl] .stat .vl,html[dir=rtl] .k-val{direction:ltr;unicode-bidi:plaintext}
+html[dir=rtl] table.tbl th,html[dir=rtl] table.tbl td{text-align:right}
+html[dir=rtl] table.tbl th.num,html[dir=rtl] table.tbl td.num{text-align:left}
+html[dir=rtl] .fifo-inv{border-left:none;border-right:3px solid var(--green);margin-left:0;margin-right:26px}
+html[dir=rtl] .page-head p .link{direction:ltr;unicode-bidi:isolate}
 </style>
 </head>
 <body>
@@ -367,6 +387,7 @@ select.inp:focus,input.inp:focus{border-color:var(--primary);box-shadow:0 0 0 3p
       </div>
       <button class="icon-btn" id="cloudPill" title="Live sync status" style="width:auto;padding:0 11px;gap:6px;font-size:12px;font-weight:700;color:#8a95a3">&#9679; Local</button>
       <button class="icon-btn" id="dataBtn" title="Data &amp; Sharing">&#128190;</button>
+      <button class="icon-btn" id="langBtn" title="Language / اللغة" style="width:auto;padding:0 11px;font-size:12px;font-weight:700;color:#8a95a3">EN</button>
       <button class="icon-btn" id="notifBtn" title="Notifications">&#128276;<span style="position:absolute;top:-4px;right:-4px;background:#ef4444;color:#fff;font-size:9px;font-weight:700;padding:0 4px;border-radius:10px" id="notifDot"></span></button>
       <div class="topuser" id="userChip">
         <div class="avatar">MA</div>
@@ -519,11 +540,16 @@ const DB = {
   commissionStatusOverride:{}, // key -> status
   // ---- v2 additions: inventory + custom commission ----
   products:[], productVariants:[], inventoryMovements:[], invoiceLines:[], customCommissions:[],
+  // ---- v3 additions: warehouses, batches, transfers, returns, credits ----
+  warehouses:[], warehouseStock:[], stockBatches:[], stockTransfers:[], returnInvoices:[], returnLines:[], customerCredits:[],
   seqInvoice:1000, seqReceipt:1000, seqCollection:0, seqInvId:0,
   seqProduct:0, seqVariant:0, seqMovement:0, seqLine:0, seqCustom:0,
+  seqWarehouse:0, seqBatch:0, seqTransfer:0, seqReturn:0, seqReturnLine:0, seqCredit:0, seqWhStock:0,
+  returnReasons:['Defective','Wrong Size','Wrong Color','Customer Rejection','Quality Issue','Delivery Error','Other'],
   // business-rule flags kept explicit (not silently assumed) — see Settings → Business Rules
   ruleFlags:{ allowNegativeStock:false, reassignMovesHistory:false }
 };
+const WAREHOUSE_TYPES=['Main','Branch','Sub','Transit'];
 const CATEGORIES=["T-Shirts","Polo Shirts","Hoodies","Trousers","Uniforms","Knitwear","Denim","Activewear"];
 const COLORS=["Black","White","Navy","Grey","Olive","Beige","Red","Sky Blue"];
 const SIZES=["S","M","L","XL","XXL"];
@@ -634,8 +660,16 @@ function seed(){
     {name:'Ahmed Hassan',email:'a.hassan@textileco.eg',role:'Sales Representative',status:'Active',salespersonId:1},
     {name:'Laila Mansour',email:'l.mansour@textileco.eg',role:'Viewer',status:'Invited'}
   ];
+  seedWarehouses();
   seedInventory();
   seedCustomCommissions();
+  ensureWarehouses();
+}
+function seedWarehouses(){
+  [['WH-MAIN','Main Warehouse','Main','Cairo HQ'],['WH-BR1','Alexandria Branch','Branch','Alexandria']].forEach(w=>{
+    DB.seqWarehouse++;DB.warehouses.push({id:DB.seqWarehouse,code:w[0],name:w[1],type:w[2],location:w[3],active:true,notes:'',
+      createdBy:'System (seed)',createdAt:fmtDate(TODAY)});
+  });
 }
 const PRODUCT_SEED=[
   ["Oversized T-Shirt","T-Shirts","BUEG","Heavyweight combed cotton oversized tee",260],
@@ -665,10 +699,12 @@ function seedInventory(){
         color:col,size:sz,price:p[4]+ (sz==='XL'||sz==='XXL'?20:0),
         stock:stock,reorderLevel:15,active:true};
       DB.productVariants.push(v);
-      // opening balance movement
+      // opening balance goes to the Main Warehouse (company total == main until stock is moved/transferred)
+      const main=mainWarehouseId();
+      DB.seqWhStock++;DB.warehouseStock.push({id:DB.seqWhStock,warehouseId:main,variantId:v.id,qty:stock});
       DB.seqMovement++;
-      DB.inventoryMovements.push({id:DB.seqMovement,date:addDays(TODAY,-randi(60,120)),productId:prod.id,variantId:v.id,
-        type:'Opening Balance',qtyIn:stock,qtyOut:0,balanceAfter:stock,reference:'OPENING',invoiceId:null,
+      DB.inventoryMovements.push({id:DB.seqMovement,date:addDays(TODAY,-randi(60,120)),productId:prod.id,variantId:v.id,warehouseId:main,
+        type:'Opening Balance',qtyIn:stock,qtyOut:0,balanceAfter:stock,reference:'OPENING',invoiceId:null,batchNo:'',returnId:null,transferId:null,
         user:'System (seed)',notes:'Opening stock',createdAt:fmtDate(TODAY)});
     }));
   });
@@ -727,7 +763,7 @@ function bonusPercentFor(avgDays){
 // Core replay: rebuild allocations, commissions, balances & statuses from base records
 function isConfirmed(i){return (i.docStatus||'Confirmed')==='Confirmed';}
 function rebuild(){
-  DB.invoices.forEach(inv=>{inv.collected=0;inv.balance=inv.amount;inv.status='Open';inv._alloc=[]});
+  DB.invoices.forEach(inv=>{inv.collected=0;inv.balance=inv.amount;inv.status='Open';inv._alloc=[];inv.returnCredit=0;});
   DB.allocations=[];DB.commissionTxns=[];
   let aId=1,cId=1;
   const cols=DB.collections.slice().sort((a,b)=>a.collectionDate-b.collectionDate||a.id-b.id);
@@ -777,9 +813,17 @@ function rebuild(){
     }
     col.unapplied=remaining;
   });
+  // Confirmed returns reduce the receivable (AR) as credit notes — applied AFTER collections and never below zero.
+  // Basic commission already earned on collections is left untouched (Keep default); any reversal is handled ONLY by a
+  // separate negative Custom-Commission adjustment, so paid commission history is never rewritten here.
+  DB.returnInvoices.filter(r=>(r.docStatus||'Draft')==='Confirmed').forEach(r=>{
+    const inv=invById(r.originalInvoiceId);if(!inv||!isConfirmed(inv))return;
+    const applied=Math.min(+r.arReduction||0,inv.balance);
+    if(applied>0){inv.balance=round(inv.balance-applied,2);inv.returnCredit=round((inv.returnCredit||0)+applied,2);}
+  });
   DB.invoices.forEach(inv=>{
     if(!isConfirmed(inv)){inv.status=inv.docStatus;return;} // Draft / Cancelled shown as-is
-    if(inv.balance<=0.5){inv.status='Fully Collected';}
+    if(inv.balance<=0.5){inv.status=(inv.collected>=inv.amount-0.5)?'Fully Collected':'Closed';}
     else if(TODAY>inv.dueDate){inv.status='Overdue';}
     else if(inv.collected>0.5){inv.status='Partially Collected';}
     else inv.status='Open';
@@ -879,31 +923,85 @@ function variantById(id){return DB.productVariants.find(v=>v.id===id)}
 function variantsOf(pid){return DB.productVariants.filter(v=>v.productId===pid)}
 function variantLabel(v){const p=productById(v.productId);return (p?p.name:'?')+' · '+v.color+' / '+v.size}
 function auditUser(){return (authRequired&&typeof authRequired==='function'&&authRequired()&&currentUserName)?currentUserName:'Demo User';}
-// The ONLY way stock changes — always writes a movement (no silent stock edits)
+/*----- Warehouses & per-warehouse stock -----*/
+function whById(id){return DB.warehouses.find(w=>w.id===id)}
+function whName(id){const w=whById(id);return w?w.name:'—'}
+function activeWarehouses(){return DB.warehouses.filter(w=>w.active!==false)}
+function mainWarehouseId(){const w=DB.warehouses.find(x=>x.type==='Main'&&x.active!==false)||activeWarehouses()[0]||DB.warehouses[0];return w?w.id:null;}
+function whStockRow(whId,vid){return DB.warehouseStock.find(x=>x.warehouseId===whId&&x.variantId===vid)}
+function whStockQty(whId,vid){const r=whStockRow(whId,vid);return r?r.qty:0}
+function variantCompanyStock(vid){return DB.warehouseStock.filter(x=>x.variantId===vid).reduce((a,x)=>a+x.qty,0)}
+function setWhStock(whId,vid,qty){let r=whStockRow(whId,vid);if(!r){DB.seqWhStock++;r={id:DB.seqWhStock,warehouseId:whId,variantId:vid,qty:0};DB.warehouseStock.push(r);}r.qty=qty;return r;}
+// Backfill: if warehouses/rows are missing (legacy data before v3), create a default Main Warehouse and
+// migrate each variant's company stock into it — WITHOUT changing company totals. Idempotent & safe.
+function ensureWarehouses(){
+  // In secure mode ONLY an editor (who can write warehouses) creates/migrates the default Main Warehouse.
+  // Non-editors (Sales Rep, Viewer, Sales Manager) just use whatever the server returns — otherwise a phantom
+  // local warehouse would (a) be rejected by RLS on push and (b) churn the live-sync signature every poll.
+  if(typeof secureMode==='function'&&secureMode()&&typeof can==='function'&&!can('editWarehouses'))return;
+  const createdW=[],createdS=[];
+  if(!DB.warehouses.length){DB.seqWarehouse++;
+    const w={id:DB.seqWarehouse,code:'WH-MAIN',name:'Main Warehouse',type:'Main',location:'',active:true,notes:'Default warehouse',createdBy:'System',createdAt:fmtDate(TODAY)};
+    DB.warehouses.push(w);createdW.push(w);}
+  const main=mainWarehouseId();if(main==null)return;
+  DB.productVariants.forEach(v=>{
+    const rows=DB.warehouseStock.filter(x=>x.variantId===v.id);
+    if(!rows.length){DB.seqWhStock++;const s={id:DB.seqWhStock,warehouseId:main,variantId:v.id,qty:v.stock||0};DB.warehouseStock.push(s);createdS.push(s);}
+    else v.stock=rows.reduce((a,x)=>a+x.qty,0); // company total = sum of warehouse balances (authoritative once rows exist)
+  });
+  DB.inventoryMovements.forEach(m=>{if(m.warehouseId==null)m.warehouseId=main;});
+  // In secure mode, persist this ONE-TIME migration to the cloud so the Main Warehouse + opening
+  // per-warehouse balances are shared by every device (and so live-sync stops seeing a phantom local-only
+  // change on every poll). Company stock totals are unchanged — each row simply equals the variant's stock.
+  if(typeof secureMode==='function'&&secureMode()&&(createdW.length||createdS.length)){
+    createdW.forEach(w=>securePush('warehouse',w));
+    createdS.forEach(s=>securePush('whstock',s));
+  }
+}
+// The ONLY way stock changes — always writes a movement (no silent stock edits). Stock is per (warehouse, variant);
+// variant.stock is kept as the COMPANY TOTAL (sum across warehouses) for backward compatibility.
 function applyMovement(variantId,type,qtyIn,qtyOut,opts){
   const v=variantById(variantId);if(!v)return null;
   opts=opts||{};
-  const newBal=v.stock+(qtyIn||0)-(qtyOut||0);
-  v.stock=newBal;
+  const whId=opts.warehouseId||mainWarehouseId();
+  const prevWh=whStockQty(whId,variantId);
+  const newWh=prevWh+(qtyIn||0)-(qtyOut||0);
+  setWhStock(whId,variantId,newWh);
+  v.stock=variantCompanyStock(variantId);
   DB.seqMovement++;
-  const mv={id:DB.seqMovement,date:opts.date||TODAY,productId:v.productId,variantId:v.id,type,
-    qtyIn:qtyIn||0,qtyOut:qtyOut||0,balanceAfter:newBal,reference:opts.reference||'',invoiceId:opts.invoiceId||null,
+  const mv={id:DB.seqMovement,date:opts.date||TODAY,productId:v.productId,variantId:v.id,warehouseId:whId,type,
+    qtyIn:qtyIn||0,qtyOut:qtyOut||0,balanceAfter:newWh,reference:opts.reference||'',invoiceId:opts.invoiceId||null,
+    batchNo:opts.batchNo||'',returnId:opts.returnId||null,transferId:opts.transferId||null,
     user:opts.user||auditUser(),notes:opts.notes||'',createdAt:fmtDate(TODAY)};
   DB.inventoryMovements.push(mv);
   if(secureMode&&typeof secureMode==='function'&&secureMode()){
-    // Write parents before child so DB foreign keys never reject the movement insert
-    // (movement → product, → variant, and → invoice when it came from an invoice).
-    const prod=productById(v.productId);
+    const prod=productById(v.productId);const row=whStockRow(whId,variantId);
     (async()=>{try{
       if(prod)await sbUpsert('products',TMAP.products.to(prod));
       await sbUpsert('product_variants',TMAP.product_variants.to(v));
       if(mv.invoiceId){const inv=invById(mv.invoiceId);if(inv)await sbUpsert('invoices',TMAP.invoices.to(inv));}
+      // Write the movement (the critical immutable audit record) BEFORE the per-warehouse balance, so a
+      // warehouse_stock hiccup can never drop the audit trail. warehouse_stock is a derived cache of the balance.
       await sbUpsert('inventory_movements',TMAP.inventory_movements.to(mv));
+      if(row)await sbUpsert('warehouse_stock',TMAP.warehouse_stock.to(row));
     }catch(e){}})();
   }
   return mv;
 }
 function variantStatus(v){ if(v.stock<=0)return 'out'; if(v.stock<=v.reorderLevel)return 'low'; return 'ok'; }
+// Per-SKU minimum-stock reminders — derived live from reorder level, so they auto-resolve once restocked.
+function lowStockVariants(){
+  if(!can('viewInventory'))return [];
+  return DB.productVariants.filter(v=>v.active!==false&&(+v.reorderLevel||0)>0&&v.stock<=v.reorderLevel)
+    .map(v=>({v,p:productById(v.productId),out:v.stock<=0,gap:Math.max(0,(+v.reorderLevel||0)-v.stock)}))
+    .sort((a,b)=>(a.out===b.out?a.v.stock-b.v.stock:(a.out?-1:1)));
+}
+// Combined notification feed (permission- & scope-aware): overdue receivables + low-stock reminders.
+function notifData(){
+  let overdue=DB.invoices.filter(i=>i.status==='Overdue');
+  if(SCOPE)overdue=overdue.filter(i=>inScope(i.salespersonId));
+  return {overdue,low:lowStockVariants()};
+}
 function inventorySummary(){
   const variants=DB.productVariants;
   return {products:DB.products.length,variants:variants.length,
@@ -935,6 +1033,9 @@ const NAV=[
   {id:'collections',label:'Collections',icon:'&#128184;'},
   {sec:'Catalog'},
   {id:'inventory',label:'Inventory',icon:'&#128230;'},
+  {id:'warehouses',label:'Warehouses',icon:'&#127981;'},
+  {id:'transfers',label:'Stock Transfers',icon:'&#128260;'},
+  {id:'returns',label:'Returns',icon:'&#8617;'},
   {sec:'Sales & Incentives'},
   {id:'reps',label:'Sales Representatives',icon:'&#128188;'},
   {id:'commissions',label:'Commissions',icon:'&#128181;'},
@@ -947,18 +1048,20 @@ let ROUTE={page:'dashboard',params:{}};
 
 function renderNav(){
   const nav=document.getElementById('nav');
-  const overdueCount=DB.invoices.filter(i=>i.status==='Overdue').length;
+  const nd=notifData();const overdueCount=nd.overdue.length;
   nav.innerHTML=NAV.map(n=>{
     if(n.sec)return `<div class="nav-sec">${n.sec}</div>`;
     if(!navAllowed(n.id))return '';
-    const badge = n.id==='ar'&&overdueCount?`<span class="badge-n">${overdueCount}</span>`:'';
+    let badge = n.id==='ar'&&overdueCount?`<span class="badge-n">${overdueCount}</span>`:'';
+    if((n.id==='inventory'||n.id==='warehouses')&&nd.low.length)badge=`<span class="badge-n" style="background:#f59e0b">${nd.low.length}</span>`;
     return `<div class="nav-item ${ROUTE.page===n.id?'active':''}" data-page="${n.id}">
       <span class="ic">${n.icon}</span><span class="nav-label">${n.label}</span>${badge}</div>`;
   }).join('');
   nav.querySelectorAll('.nav-item').forEach(el=>el.onclick=()=>go(el.dataset.page));
   const k=companyKPIs();
   document.getElementById('sideFoot').innerHTML=`Outstanding AR<br><b style="color:#fff;font-size:14px">${egp(k.outstanding)}</b>`;
-  document.getElementById('notifDot').textContent=overdueCount;
+  document.getElementById('notifDot').textContent=(overdueCount+nd.low.length)||'';
+  applyI18n();
 }
 function go(page,params){ROUTE={page,params:params||{}};window.scrollTo(0,0);renderNav();renderView();}
 
@@ -968,11 +1071,99 @@ function flashUpdated(){
   document.querySelectorAll('#view .k-val,#view .stat .vl,#view tfoot .num').forEach(el=>{
     el.classList.remove('flash-val');void el.offsetWidth;el.classList.add('flash-val');});
 }
+/* ===================== i18n (English / العربية + RTL) ===================== *
+ * The English UI is authoritative. Arabic is applied as a post-render pass that ONLY
+ * translates fixed UI phrases (exact whole-string dictionary matches) plus elements
+ * explicitly tagged data-i18n. User-entered data (customer/product names, SKUs, notes,
+ * numbers, references) is never a dictionary key, so it is never translated. */
+const I18N_KEY='texcredit_lang';
+let APP_LANG=(function(){try{return localStorage.getItem(I18N_KEY)||'en';}catch(e){return 'en';}})();
+const I18N={ar:{
+  // nav sections + items
+  'Overview':'نظرة عامة','Receivables':'الذمم المدينة','Catalog':'الكتالوج','Incentives':'الحوافز','System':'النظام',
+  'Dashboard':'لوحة التحكم','Customers':'العملاء','AR Aging':'أعمار الذمم','Invoices':'الفواتير','Collections':'التحصيلات',
+  'Inventory':'المخزون','Warehouses':'المستودعات','Stock Transfers':'تحويلات المخزون','Returns':'المرتجعات',
+  'Commissions':'العمولات','Bonuses':'المكافآت','Salespeople':'المندوبون','Reports':'التقارير','Settings':'الإعدادات',
+  // page titles / headers
+  'Executive Dashboard':'لوحة التحكم التنفيذية','Inventory Movement History':'سجل حركة المخزون',
+  'Returns / Reverse Invoices':'المرتجعات / فواتير عكسية','Customer 360':'العميل 360',
+  'AR Aging & Risk':'أعمار الذمم والمخاطر','Business Rules':'قواعد العمل',
+  // common buttons
+  'Reports ':'التقارير','Export':'تصدير','Export filtered CSV':'تصدير CSV مُفلتر','Reset':'إعادة تعيين','Clear':'مسح',
+  'Save':'حفظ','Add':'إضافة','Cancel':'إلغاء','Save Changes':'حفظ التغييرات','Delete':'حذف','Edit':'تعديل',
+  'Back':'رجوع','View all':'عرض الكل','Confirm':'تأكيد','+ New Return':'+ مرتجع جديد','+ New Invoice':'+ فاتورة جديدة',
+  '+ New Transfer':'+ تحويل جديد','+ Add Warehouse':'+ إضافة مستودع','+ Add Product':'+ إضافة منتج',
+  '+ Record Collection':'+ تسجيل تحصيل','+ Add Item':'+ إضافة صنف','Save as Draft':'حفظ كمسودة','Save & Confirm':'حفظ وتأكيد',
+  'Confirm / Post':'تأكيد / ترحيل','Confirm / Reverse':'تأكيد / عكس',
+  // table headers / labels
+  'Date':'التاريخ','Product':'المنتج','SKU':'الرمز','Type':'النوع','Warehouse':'المستودع','Balance':'الرصيد',
+  'Reference':'المرجع','Invoice':'الفاتورة','User':'المستخدم','Status':'الحالة','Customer':'العميل','Reason':'السبب',
+  'In':'وارد','Out':'صادر','Qty':'الكمية','Unit':'سعر الوحدة','Gross':'الإجمالي','Discount':'الخصم','Net':'الصافي',
+  'Doc':'المستند','Ref / Batch':'مرجع / دفعة','Code':'الرمز','Location':'الموقع','Units':'وحدات','Stock Value':'قيمة المخزون',
+  'Return #':'رقم المرتجع','Net Return':'صافي المرتجع','Excess':'الفائض','Commission':'العمولة','Salesperson':'المندوب',
+  'Rep':'المندوب','Amount':'المبلغ','Method':'الطريقة','Search':'بحث','Direction':'الاتجاه','From date':'من تاريخ','To date':'إلى تاريخ',
+  'Batch #':'رقم الدفعة','Sold':'المُباع','Already Ret.':'مرتجع سابقاً','Returnable':'قابل للإرجاع','Return Qty':'كمية الإرجاع',
+  'Applied %':'٪ المطبق','Disc. Type':'نوع الخصم','Line Items':'بنود الفاتورة',
+  // statuses / badges
+  'Draft':'مسودة','Confirmed':'مؤكد','Cancelled':'ملغي','Open':'مفتوح','Overdue':'متأخر','Closed':'مغلق',
+  'Partially Collected':'محصّل جزئياً','Fully Collected':'محصّل بالكامل','Active':'نشط','Inactive':'غير نشط',
+  'Low':'منخفض','Out':'نافد','In stock':'متوفر','Kept':'محتفظ به','Reversed':'معكوس','Credit':'رصيد دائن','Refund':'استرداد',
+  // KPI / dashboard
+  'Total Sales':'إجمالي المبيعات','Outstanding AR':'الذمم المستحقة','Collection Rate':'معدل التحصيل',
+  'Avg Collection Days':'متوسط أيام التحصيل','Total Commission':'إجمالي العمولات','Bonus Earned':'المكافأة المكتسبة',
+  'Low-Stock Reminders':'تنبيهات نقص المخزون','On Hand':'المتوفر','Reorder Level':'حد إعادة الطلب','Shortfall':'العجز',
+  'Minimum Stock':'الحد الأدنى للمخزون','Bulk Stock In':'إضافة مخزون مجمعة','Set Minimum Stock':'تعيين الحد الأدنى للمخزون','Save':'حفظ',
+  'Confirmed Returns':'المرتجعات المؤكدة','Net Return Value':'قيمة صافي المرتجع','Receivable Reduced':'الذمم المخفّضة',
+  'Customer Credit':'رصيد العميل','Refunds':'المستردات','Notifications':'الإشعارات','All reasons':'كل الأسباب',
+  'All types':'كل الأنواع','All warehouses':'كل المستودعات','All methods':'كل الطرق','All reps':'كل المندوبين',
+  'Returned Lines':'البنود المرتجعة','Financial Treatment':'المعالجة المالية','Commission Treatment':'معالجة العمولة',
+  'Lines to Return':'البنود المراد إرجاعها','Return Date':'تاريخ المرتجع','Receiving Warehouse':'مستودع الاستلام','Notes':'ملاحظات',
+  'Original Invoice':'الفاتورة الأصلية','Return / Reverse Invoice':'مرتجع / فاتورة عكسية','Stock In':'إدخال مخزون'
+}};
+function t(s){if(APP_LANG==='en'||s==null)return s;const d=I18N[APP_LANG];return (d&&d[s])||s;}
+const I18N_SKIP={SCRIPT:1,STYLE:1,INPUT:1,TEXTAREA:1,OPTION:1,SELECT:1,CANVAS:1};
+function i18nWalk(root,d){
+  const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode(n){
+    const p=n.parentNode;if(!p||I18N_SKIP[p.nodeName])return NodeFilter.FILTER_REJECT;
+    if(p.closest&&p.closest('.no-i18n'))return NodeFilter.FILTER_REJECT;
+    return NodeFilter.FILTER_ACCEPT;}});
+  const jobs=[];let n;while(n=w.nextNode()){const raw=n.nodeValue;const key=raw.trim();if(key&&d[key]&&d[key]!==key)jobs.push([n,raw.replace(key,d[key])]);}
+  jobs.forEach(([n,val])=>{n.nodeValue=val;});
+}
+function applyI18n(){
+  const html=document.documentElement;
+  if(APP_LANG!=='ar'){html.dir='ltr';html.lang='en';return;}
+  html.dir='rtl';html.lang='ar';const d=I18N.ar;if(!d)return;
+  document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.getAttribute('data-i18n');if(d[k])el.textContent=d[k];});
+  document.querySelectorAll('#view [placeholder],#topbar [placeholder]').forEach(el=>{const k=el.getAttribute('placeholder');if(d[k])el.setAttribute('placeholder',d[k]);});
+  // 'overlay' = any open modal/form: its labels & buttons translate, but input VALUES are skipped (I18N_SKIP), so typed data is never touched.
+  ['sidebar','topbar','view','overlay'].forEach(id=>{const r=document.getElementById(id);if(r)i18nWalk(r,d);});
+}
+function setLang(l){
+  const newLang=(l==='ar')?'ar':'en';
+  // A read-only Details drawer must never survive the re-render as an orphaned/blank panel — close it first.
+  const drawer=document.getElementById('drawer');
+  if(drawer&&drawer.classList.contains('open')&&typeof closeDrawer==='function')closeDrawer();
+  // An open modal is a FORM that may hold unsaved input. renderNav()/renderView() only touch #nav and #view,
+  // never #overlay, so the form and everything typed into it is preserved automatically across the switch
+  // (it simply re-flows to the new direction). We never silently discard it.
+  APP_LANG=newLang;try{localStorage.setItem(I18N_KEY,APP_LANG);}catch(e){}
+  const lb=document.getElementById('langBtn');if(lb)lb.textContent=(APP_LANG==='ar')?'ع':'EN';
+  // Flip direction immediately (don't wait for the deferred renderView) so layout never lags a frame.
+  document.documentElement.dir=(APP_LANG==='ar')?'rtl':'ltr';document.documentElement.lang=APP_LANG;
+  if(secureMode&&secureMode())pushLangPref(APP_LANG);
+  renderNav();renderView();
+  applyI18n(); // also translate an open modal's chrome now (input values are never touched)
+}
+function toggleLang(){setLang(APP_LANG==='ar'?'en':'ar');}
+function pushLangPref(l){ if(!(secureMode&&secureMode()&&SESSION&&SESSION.uid))return;
+  try{const c=getCloud();fetch(`${c.url}/rest/v1/profiles?id=eq.${SESSION.uid}`,{method:'PATCH',headers:{...dataHeaders(),'Prefer':'return=minimal'},body:JSON.stringify({language:l})}).catch(()=>{});}catch(e){}
+}
 function renderView(){
   V.innerHTML='<div class="spinner"></div>';
   // brief loading state to feel real
   setTimeout(()=>{
-    try{ PAGES[ROUTE.page](ROUTE.params); if(FLASH_NEXT){flashUpdated();FLASH_NEXT=false;} }
+    try{ PAGES[ROUTE.page](ROUTE.params); if(FLASH_NEXT){flashUpdated();FLASH_NEXT=false;} applyI18n(); }
     catch(e){ V.innerHTML='<div class="empty"><div class="e-ic">&#9888;</div><b>Something went wrong</b>'+esc(e.message)+'</div>';console.error(e);}
   },90);
 }
@@ -1006,7 +1197,7 @@ document.getElementById('drawerOv').onclick=closeDrawer;
 
 /* helpers for badges */
 function statusBadge(st){
-  const map={'Open':'b-blue','Partially Collected':'b-amber','Fully Collected':'b-green','Overdue':'b-red','Draft':'b-slate','Cancelled':'b-gray'};
+  const map={'Open':'b-blue','Partially Collected':'b-amber','Fully Collected':'b-green','Closed':'b-green','Overdue':'b-red','Draft':'b-slate','Cancelled':'b-gray'};
   return `<span class="badge ${map[st]||'b-gray'}"><span class="dot" style="background:currentColor"></span>${st}</span>`;
 }
 // Small marker for figures derived from rules still awaiting management sign-off (see Settings → Business Rules)
@@ -1079,6 +1270,15 @@ PAGES.dashboard=function(){
       <div class="k-sub">${deltaTag(x.dinv?-x.d:x.d)} vs previous period</div>
     </div>`).join('')}
   </div>
+  ${(()=>{const low=lowStockVariants();if(!low.length)return '';const out=low.filter(x=>x.out).length;const top=low.slice(0,8);
+    return `<div class="card row-gap" style="border-left:3px solid #f59e0b">
+      <div class="card-h"><h3>&#9888; Low-Stock Reminders</h3><span class="sub">${low.length} SKU${low.length>1?'s':''} at or below minimum stock${out?` · ${out} out of stock`:''}</span>
+        <div class="right"><button class="btn sm" onclick="prodState.tab='variants';prodState.stock='low';go('inventory')">View all</button></div></div>
+      <div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>SKU</th><th>Product</th><th class="num">On Hand</th><th class="num" data-i18n="Minimum Stock">Minimum Stock</th><th class="num">Shortfall</th><th>Status</th></tr></thead>
+        <tbody>${top.map(({v,p,out,gap})=>`<tr class="clickable" onclick="go('product',{id:${v.productId}})"><td class="t-strong">${v.sku}</td><td>${esc(p?p.name:'')} <small class="muted">${v.color}/${v.size}</small></td>
+          <td class="num t-strong ${out?'neg':''}">${v.stock}</td><td class="num muted">${v.reorderLevel}</td><td class="num neg">${gap>0?'−'+gap:'—'}</td><td>${invStatusBadge(out?'out':'low')}</td></tr>`).join('')}</tbody>
+      </table></div>${low.length>top.length?`<div class="muted" style="font-size:11px;padding:8px 12px">+${low.length-top.length} more — see Inventory</div>`:''}</div></div>`;})()}
   <div class="grid-2-1 row-gap">
     <div class="card"><div class="card-h"><h3>Monthly Sales vs Collections</h3><span class="sub">Last 12 months (EGP)</span>
       <div class="right"><span class="legend-inline"><span><i style="background:#94a3b8"></i>Sales</span><span><i style="background:#2563eb"></i>Collections</span></span></div></div>
@@ -1883,6 +2083,7 @@ PAGES.inventory=function(){
   <div class="page-head"><div><h1>Inventory</h1><p>${s.products} products · ${s.variants} variants · variant-level stock tracking</p></div>
     <div class="ph-actions">
       ${can('stockIn')?`<button class="btn" onclick="openStockIn()">&#8595; Stock In</button>`:''}
+      ${can('bulkStockIn')?`<button class="btn" onclick="openBulkStockIn()">&#128230; <span data-i18n="Bulk Stock In">Bulk Stock In</span></button>`:''}
       ${can('editProducts')?`<button class="btn" onclick="openInventoryImport()">&#8681; Import CSV</button>`:''}
       <button class="btn" onclick="go('movements')">&#128220; Movements</button>
       ${can('editProducts')?`<button class="btn primary" onclick="openProductForm()">+ Add Product</button>`:''}
@@ -1941,10 +2142,10 @@ function renderInvTableBox(){
       return `<tr class="clickable" onclick="go('product',{id:${v.productId}})">
       <td class="t-strong">${v.sku}</td><td>${esc(p.name)}</td><td>${dtypeBadge(discountTypeOf(v.productId))}</td><td>${v.color}</td><td>${v.size}</td>
       <td class="num">${egp0(v.price)}</td><td class="num t-strong ${st==='out'?'neg':''}">${v.stock}</td>
-      <td class="num muted">${v.reorderLevel}</td><td>${invStatusBadge(st)}</td>
+      <td class="num"><span class="${st==='low'||st==='out'?'neg':'muted'}">${v.reorderLevel}</span>${can('editProducts')?` <button class="icon-act" title="Set Minimum Stock" onclick="event.stopPropagation();openMinStock(${v.id})" style="width:22px;height:22px;font-size:11px">&#9998;</button>`:''}</td><td>${invStatusBadge(st)}</td>
       ${can('adjustStock')?`<td class="num row-act" onclick="event.stopPropagation()"><button class="icon-act" title="Adjust stock" onclick="openStockAdjust(${v.id})">&#9878;</button>${can('editProducts')?`<button class="icon-act" title="Edit variant" onclick="openVariantForm(${v.productId},${v.id})">&#9998;</button>`:''}</td>`:''}
       </tr>`;}).join(''):`<tr><td colspan="10"><div class="empty"><div class="e-ic">&#128230;</div><b>No variants match</b></div></td></tr>`;
-    box.innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th>Disc. Type</th><th>Color</th><th>Size</th><th class="num">Price</th><th class="num">Stock</th><th class="num">Reorder</th><th>Status</th>${can('adjustStock')?'<th class="num col-act">Actions</th>':''}</tr></thead><tbody>${body}</tbody></table></div>
+    box.innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th>Disc. Type</th><th>Color</th><th>Size</th><th class="num">Price</th><th class="num">Stock</th><th class="num" data-i18n="Minimum Stock">Minimum Stock</th><th>Status</th>${can('adjustStock')?'<th class="num col-act">Actions</th>':''}</tr></thead><tbody>${body}</tbody></table></div>
       ${pagerBox(total,prodState.page,pages)}`;
   }else{
     let prods=DB.products.filter(p=>{
@@ -1994,10 +2195,10 @@ PAGES.product=function(p){
   ${prod.description?`<div class="section-note">${esc(prod.description)}</div>`:''}
   <div class="card row-gap"><div class="card-h"><h3>Variants</h3><span class="sub">Stock is tracked per variant</span></div>
     <div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>SKU</th><th>Color</th><th>Size</th><th class="num">Price</th><th class="num">Stock</th><th class="num">Reorder</th><th>Status</th>${can('adjustStock')?'<th class="num col-act">Actions</th>':''}</tr></thead>
+    <thead><tr><th>SKU</th><th>Color</th><th>Size</th><th class="num">Price</th><th class="num">Stock</th><th class="num" data-i18n="Minimum Stock">Minimum Stock</th><th>Status</th>${can('adjustStock')?'<th class="num col-act">Actions</th>':''}</tr></thead>
     <tbody>${vs.length?vs.map(v=>{const st=variantStatus(v);return `<tr>
       <td class="t-strong">${v.sku}</td><td>${v.color}</td><td>${v.size}</td><td class="num">${egp0(v.price)}</td>
-      <td class="num t-strong ${st==='out'?'neg':''}">${v.stock}</td><td class="num muted">${v.reorderLevel}</td><td>${invStatusBadge(st)}</td>
+      <td class="num t-strong ${st==='out'?'neg':''}">${v.stock}</td><td class="num"><span class="${st==='low'||st==='out'?'neg':'muted'}">${v.reorderLevel}</span>${can('editProducts')?` <button class="icon-act" title="Set Minimum Stock" onclick="openMinStock(${v.id})" style="width:22px;height:22px;font-size:11px">&#9998;</button>`:''}</td><td>${invStatusBadge(st)}</td>
       ${can('adjustStock')?`<td class="num row-act"><button class="icon-act" title="Adjust stock" onclick="openStockAdjust(${v.id})">&#9878;</button>${can('stockIn')?`<button class="icon-act" title="Stock in" onclick="openStockIn(${v.id})">&#8595;</button>`:''}${can('editProducts')?`<button class="icon-act" title="Edit" onclick="openVariantForm(${prod.id},${v.id})">&#9998;</button>`:''}</td>`:''}
       </tr>`;}).join(''):`<tr><td colspan="8"><div class="empty"><b>No variants yet</b>${can('editProducts')?' · <span class="link" onclick="openVariantForm('+prod.id+')">Add one</span>':''}</div></td></tr>`}</tbody>
     </table></div></div></div>
@@ -2012,38 +2213,74 @@ PAGES.product=function(p){
 function movementBadge(t){const map={'Opening Balance':'b-slate','Stock In':'b-green','Sale / Invoice':'b-blue','Manual Adjustment':'b-amber','Invoice Reversal':'b-gray','Return':'b-gray'};return `<span class="badge ${map[t]||'b-gray'}">${t}</span>`;}
 
 /*----- Movements page -----*/
-const movState={search:'',type:'',page:1};
+const MOV_TYPES=['Opening Balance','Stock In','Sale / Invoice','Manual Adjustment','Invoice Reversal','Return / Reverse Invoice','Return Reversal','Warehouse Transfer Out','Warehouse Transfer In'];
+const movState={search:'',type:'',warehouse:'',dir:'',from:'',to:'',batch:'',page:1};
 PAGES.movements=function(){
+  const whOpts=DB.warehouses.map(w=>`<option value="${w.id}" ${movState.warehouse==String(w.id)?'selected':''}>${esc(w.name)}</option>`).join('');
   V.innerHTML=`
-  <div class="page-head"><div><p style="margin:0"><span class="link" onclick="go('inventory')">Inventory</span> / Movements</p><h1 style="margin-top:4px">Inventory Movement History</h1><p>${DB.inventoryMovements.length} movements · full audit trail of every stock change</p></div>
-    <div class="ph-actions"><button class="btn" onclick="go('inventory')">&#8592; Back</button><button class="btn" onclick="exportToast('Inventory Movements','CSV')">&#8681; Export</button></div></div>
+  <div class="page-head"><div><p style="margin:0"><span class="link" onclick="go('inventory')">Inventory</span> / Movements</p><h1 style="margin-top:4px" data-i18n="Inventory Movement History">Inventory Movement History</h1><p>${DB.inventoryMovements.length} movements · full audit trail of every stock change</p></div>
+    <div class="ph-actions"><button class="btn" onclick="go('inventory')">&#8592; Back</button>${can('exportMovements')?`<button class="btn" onclick="exportMovementsCSV()">&#8681; Export filtered CSV</button>`:''}</div></div>
   <div class="card"><div class="card-b">
-    <div class="filters">
-      <div class="fld"><label>Search</label><input class="inp" id="mv_search" placeholder="SKU, reference, product..." value="${esc(movState.search)}" style="width:220px"></div>
-      <div class="fld"><label>Type</label><select class="inp" id="mv_type"><option value="">All types</option>${['Opening Balance','Stock In','Sale / Invoice','Manual Adjustment','Invoice Reversal','Return'].map(t=>`<option ${movState.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
-      <div class="fld"><label>&nbsp;</label><button class="btn sm" onclick="movState.search='';movState.type='';movState.page=1;PAGES.movements()">Clear</button></div>
-    </div><div id="mvTable"></div></div></div>`;
-  document.getElementById('mv_search').oninput=e=>{movState.search=e.target.value;movState.page=1;renderMovTable();};
-  document.getElementById('mv_type').onchange=e=>{movState.type=e.target.value;movState.page=1;renderMovTable();};
+    <div class="filters" style="flex-wrap:wrap;gap:10px">
+      <div class="fld"><label>Search</label><input class="inp" id="mv_search" placeholder="SKU, reference, product..." value="${esc(movState.search)}" style="width:200px"></div>
+      <div class="fld"><label>Type</label><select class="inp" id="mv_type"><option value="">All types</option>${MOV_TYPES.map(t=>`<option ${movState.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div class="fld"><label>Warehouse</label><select class="inp" id="mv_wh"><option value="">All warehouses</option>${whOpts}</select></div>
+      <div class="fld"><label>Direction</label><select class="inp" id="mv_dir"><option value="">In &amp; Out</option><option value="in" ${movState.dir==='in'?'selected':''}>Stock In (+)</option><option value="out" ${movState.dir==='out'?'selected':''}>Stock Out (−)</option></select></div>
+      <div class="fld"><label>From date</label><input type="date" class="inp" id="mv_from" value="${esc(movState.from)}"></div>
+      <div class="fld"><label>To date</label><input type="date" class="inp" id="mv_to" value="${esc(movState.to)}"></div>
+      <div class="fld"><label>Batch #</label><input class="inp" id="mv_batch" placeholder="STB-..." value="${esc(movState.batch)}" style="width:130px"></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn sm" onclick="resetMovFilters()">Reset</button></div>
+    </div>
+    <div id="mvCount" class="muted" style="font-size:11.5px;margin:2px 0 6px"></div>
+    <div id="mvTable"></div></div></div>`;
+  const b=id=>document.getElementById(id);
+  b('mv_search').oninput=e=>{movState.search=e.target.value;movState.page=1;renderMovTable();};
+  b('mv_type').onchange=e=>{movState.type=e.target.value;movState.page=1;renderMovTable();};
+  b('mv_wh').onchange=e=>{movState.warehouse=e.target.value;movState.page=1;renderMovTable();};
+  b('mv_dir').onchange=e=>{movState.dir=e.target.value;movState.page=1;renderMovTable();};
+  b('mv_from').onchange=e=>{movState.from=e.target.value;movState.page=1;renderMovTable();};
+  b('mv_to').onchange=e=>{movState.to=e.target.value;movState.page=1;renderMovTable();};
+  b('mv_batch').oninput=e=>{movState.batch=e.target.value;movState.page=1;renderMovTable();};
   renderMovTable();
 };
-function renderMovTable(){
+// All filters are combinable; returns the filtered, sorted movement set (shared by the table and the CSV export).
+function filteredMovements(){
   let data=DB.inventoryMovements.slice().sort((a,b)=>b.date-a.date||b.id-a.id);
   if(movState.type)data=data.filter(m=>m.type===movState.type);
+  if(movState.warehouse)data=data.filter(m=>String(m.warehouseId||'')===movState.warehouse);
+  if(movState.dir==='in')data=data.filter(m=>(+m.qtyIn||0)>0);
+  if(movState.dir==='out')data=data.filter(m=>(+m.qtyOut||0)>0);
+  if(movState.batch){const q=movState.batch.toLowerCase();data=data.filter(m=>(m.batchNo||'').toLowerCase().includes(q));}
+  if(movState.from){const f=parseDateInput(movState.from);data=data.filter(m=>m.date>=f);}
+  if(movState.to){const t=parseDateInput(movState.to);t.setHours(23,59,59,999);data=data.filter(m=>m.date<=t);}
   if(movState.search){const q=movState.search.toLowerCase();data=data.filter(m=>{const v=variantById(m.variantId),p=productById(m.productId);
-    return (v&&v.sku.toLowerCase().includes(q))||(p&&p.name.toLowerCase().includes(q))||(m.reference||'').toLowerCase().includes(q);});}
+    return (v&&v.sku.toLowerCase().includes(q))||(p&&p.name.toLowerCase().includes(q))||(m.reference||'').toLowerCase().includes(q)||(m.batchNo||'').toLowerCase().includes(q);});}
+  return data;
+}
+function renderMovTable(){
+  const data=filteredMovements();
   const per=14,total=data.length,pages=Math.max(1,Math.ceil(total/per));if(movState.page>pages)movState.page=pages;
   const slice=data.slice((movState.page-1)*per,movState.page*per);
+  const cnt=document.getElementById('mvCount');const active=[movState.type,movState.warehouse,movState.dir,movState.from,movState.to,movState.batch,movState.search].filter(Boolean).length;
+  if(cnt)cnt.textContent=`${total} of ${DB.inventoryMovements.length} movements${active?` · ${active} filter${active>1?'s':''} active`:''}`;
   const body=slice.length?slice.map(m=>{const v=variantById(m.variantId),p=productById(m.productId);
-    return `<tr><td>${fmtDate(m.date)}</td><td>${p?esc(p.name):'—'}</td><td>${v?v.sku:'—'}</td><td>${movementBadge(m.type)}</td>
+    return `<tr><td>${fmtDate(m.date)}</td><td>${p?esc(p.name):'—'}</td><td>${v?v.sku:'—'}</td><td>${esc(whName(m.warehouseId))}</td><td>${movementBadgeV3(m.type)}</td>
     <td class="num pos">${m.qtyIn||''}</td><td class="num neg">${m.qtyOut||''}</td><td class="num t-strong">${m.balanceAfter}</td>
-    <td class="muted">${esc(m.reference||'')}</td><td>${m.invoiceId?`<span class="link" onclick="go('invoice',{id:${m.invoiceId}})">${invById(m.invoiceId)?invById(m.invoiceId).invoiceNumber:''}</span>`:'—'}</td><td class="muted">${esc(m.user||'')}</td></tr>`;}).join(''):`<tr><td colspan="10"><div class="empty"><b>No movements match</b></div></td></tr>`;
-  document.getElementById('mvTable').innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Product</th><th>SKU</th><th>Type</th><th class="num">In</th><th class="num">Out</th><th class="num">Balance</th><th>Reference</th><th>Invoice</th><th>User</th></tr></thead><tbody>${body}</tbody></table></div>
+    <td class="muted">${esc(m.reference||m.batchNo||'')}</td><td>${m.invoiceId?`<span class="link" onclick="go('invoice',{id:${m.invoiceId}})">${invById(m.invoiceId)?invById(m.invoiceId).invoiceNumber:''}</span>`:(m.returnId?`<span class="link" onclick="go('return',{id:${m.returnId}})">RTN</span>`:'—')}</td><td class="muted">${esc(m.user||'')}</td></tr>`;}).join(''):`<tr><td colspan="11"><div class="empty"><b>No movements match</b>Try clearing some filters</div></td></tr>`;
+  document.getElementById('mvTable').innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Product</th><th>SKU</th><th>Warehouse</th><th>Type</th><th class="num">In</th><th class="num">Out</th><th class="num">Balance</th><th>Ref / Batch</th><th>Doc</th><th>User</th></tr></thead><tbody>${body}</tbody></table></div>
     <div class="pager"><span class="pg-info">Showing ${total?(movState.page-1)*per+1:0}–${Math.min(total,movState.page*per)} of ${total}</span>
      <button onclick="movPage(${movState.page-1})" ${movState.page<=1?'disabled':''}>&#8249;</button><span>Page ${movState.page} / ${pages}</span>
      <button onclick="movPage(${movState.page+1})" ${movState.page>=pages?'disabled':''}>&#8250;</button></div>`;
 }
 function movPage(p){movState.page=p;renderMovTable();}
+function resetMovFilters(){Object.assign(movState,{search:'',type:'',warehouse:'',dir:'',from:'',to:'',batch:'',page:1});PAGES.movements();}
+function exportMovementsCSV(){
+  if(!requirePerm('exportMovements','export'))return;
+  const rows=[['Date','Product','SKU','Color','Size','Warehouse','Type','In','Out','Balance','Reference','Batch','Invoice','Return','User','Notes']];
+  filteredMovements().forEach(m=>{const v=variantById(m.variantId),p=productById(m.productId);
+    rows.push([fmtDate(m.date),p?p.name:'',v?v.sku:'',v?v.color:'',v?v.size:'',whName(m.warehouseId),m.type,m.qtyIn||0,m.qtyOut||0,m.balanceAfter,m.reference||'',m.batchNo||'',m.invoiceId?invNo(m.invoiceId):'',m.returnId||'',m.user||'',m.notes||'']);});
+  downloadCSV('inventory-movements.csv',rows);toast('Export ready',(rows.length-1)+' movements → inventory-movements.csv','ok');
+}
 
 /*----- Inventory forms -----*/
 function stampCreate(o){o.createdBy=auditUser();o.createdAt=fmtDate(TODAY);o.updatedBy='';o.updatedAt='';return o;}
@@ -2088,7 +2325,7 @@ function openVariantForm(productId,variantId){
       <div class="form-row"><label>Variant SKU</label><input id="vr_sku" value="${v?esc(v.sku):''}" placeholder="auto if blank"></div>
       <div class="form-row"><label>Selling Price (EGP)</label><input type="number" id="vr_price" value="${v?v.price:prod.defaultPrice}"></div>
       ${v?'':`<div class="form-row"><label>Opening Stock</label><input type="number" id="vr_stock" value="0"></div>`}
-      <div class="form-row"><label>Reorder Level</label><input type="number" id="vr_reorder" value="${v?v.reorderLevel:15}"></div>
+      <div class="form-row"><label data-i18n="Minimum Stock">Minimum Stock</label><input type="number" id="vr_reorder" value="${v?v.reorderLevel:15}"><span class="muted" style="font-size:10px">Low-stock alerts trigger at or below this level</span></div>
       <div class="form-row"><label>Status</label><select id="vr_active"><option value="1" ${!v||v.active?'selected':''}>Active</option><option value="0" ${v&&!v.active?'selected':''}>Inactive</option></select></div>
     </div>${v?'<div class="section-note" style="margin-top:12px">To change stock use <b>Adjust</b> or <b>Stock In</b> so a movement is recorded.</div>':''}</div>
     <div class="modal-f"><button class="btn" data-close>Cancel</button><button class="btn primary" id="vr_save">${v?'Save Changes':'Add Variant'}</button></div>`);
@@ -2102,6 +2339,31 @@ function openVariantForm(productId,variantId){
     else{DB.seqVariant++;const nv={id:DB.seqVariant,productId,sku,color,size,price,stock:0,reorderLevel:reorder,active};DB.productVariants.push(nv);securePush('variant',nv);
       const open=+document.getElementById('vr_stock').value||0;if(open>0)applyMovement(nv.id,'Opening Balance',open,0,{reference:'OPENING',notes:'Opening stock on variant creation'});
       closeModal();toast('Variant added',sku+(open>0?' · opening stock '+open:''),'ok');go('product',{id:productId});}
+  };
+}
+// Quick per-SKU edit of the Minimum Stock threshold (stored as reorderLevel — no new field). Low-stock
+// reminders/dashboard/bell/filter recompute the instant this is saved (they read reorderLevel live).
+function openMinStock(variantId){
+  if(!requirePerm('editProducts','edit minimum stock'))return;
+  const v=variantById(variantId);
+  if(!v){toast('Variant not found','Refresh the inventory list and try again','warn');return;}
+  const p=productById(v.productId);
+  openModal(`<div class="modal-h"><div><h3 data-i18n="Set Minimum Stock">Set Minimum Stock</h3><div class="sub">${v.sku} · ${esc(p?p.name:'')} · ${v.color}/${v.size}</div></div><button class="x" data-close>&times;</button></div>
+    <div class="modal-b">
+      <div class="stat-row" style="margin-bottom:14px"><div class="stat"><div class="lb">Current Stock</div><div class="vl">${v.stock}</div></div><div class="stat"><div class="lb" data-i18n="Minimum Stock">Minimum Stock</div><div class="vl">${v.reorderLevel}</div></div></div>
+      <div class="form-grid"><div class="form-row full"><label data-i18n="Minimum Stock">Minimum Stock</label><input type="number" id="ms_val" min="0" value="${v.reorderLevel}"><span class="muted" style="font-size:10px">Low-stock alerts trigger when stock is at or below this level (Low = 1…min, Out = 0).</span></div></div>
+      <div id="ms_preview" class="section-note" style="margin-top:12px"></div>
+    </div>
+    <div class="modal-f"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ms_save" data-i18n="Save">Save</button></div>`);
+  const upd=()=>{const nv=Math.max(0,Math.floor(+document.getElementById('ms_val').value||0));
+    const st=v.stock<=0?'Out of Stock':(v.stock<=nv?'Low Stock':'In Stock');
+    document.getElementById('ms_preview').innerHTML=`With a minimum of <b>${nv}</b> and stock <b>${v.stock}</b>, this SKU is <b>${st}</b>.`;};
+  document.getElementById('ms_val').oninput=upd;upd();
+  document.getElementById('ms_save').onclick=()=>{
+    const nv=Math.max(0,Math.floor(+document.getElementById('ms_val').value||0));
+    v.reorderLevel=nv;securePush('variant',v);closeModal();
+    // rebuild()+re-render so low-stock reminders, the dashboard card, the bell badge and the Stock filter all update now.
+    applyChange('Minimum stock updated',v.sku+' → min '+nv);
   };
 }
 function openStockAdjust(variantId){
@@ -2205,6 +2467,568 @@ function runInventoryImport(file){
   rd.onerror=()=>toast('Read error','Could not read the file','err');
   rd.readAsText(file);
 }
+
+/*=================================== WAREHOUSES / BATCHES / TRANSFERS / RETURNS ===================================*/
+function pad6(n){return String(n).padStart(6,'0');}
+function nextTransferNo(){return 'TRF-'+pad6(DB.seqTransfer+1);}
+function nextReturnNo(){return 'RTN-'+pad6(DB.seqReturn+1);}
+function nextBatchNo(dt){const d=dt||TODAY;const ymd=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+  const n=DB.stockBatches.filter(b=>b.batchNo&&b.batchNo.indexOf('STB-'+ymd)===0).length+1;return 'STB-'+ymd+'-'+String(n).padStart(3,'0');}
+function whTypeBadge(t){const m={Main:'b-blue',Branch:'b-green',Sub:'b-slate',Transit:'b-amber'};return `<span class="badge ${m[t]||'b-gray'}">${t}</span>`;}
+function returnStatusBadge(s){const m={Draft:'b-slate',Confirmed:'b-green',Cancelled:'b-gray'};return `<span class="badge ${m[s]||'b-gray'}">${s}</span>`;}
+function movementBadgeV3(t){const m={'Opening Balance':'b-slate','Stock In':'b-green','Sale / Invoice':'b-blue','Manual Adjustment':'b-amber','Invoice Reversal':'b-gray','Return / Reverse Invoice':'b-green','Return Reversal':'b-gray','Warehouse Transfer Out':'b-red','Warehouse Transfer In':'b-green'};return `<span class="badge ${m[t]||'b-gray'}">${t}</span>`;}
+function downloadCSV(filename,rows){
+  const esc=s=>{s=(s==null)?'':String(s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  const t=rows.map(r=>r.map(esc).join(',')).join('\r\n');
+  const blob=new Blob([t],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+/*----- Warehouses master -----*/
+PAGES.warehouses=function(){
+  const rows=DB.warehouses.map(w=>{const units=DB.warehouseStock.filter(s=>s.warehouseId===w.id).reduce((a,s)=>a+s.qty,0);
+    const val=DB.warehouseStock.filter(s=>s.warehouseId===w.id).reduce((a,s)=>{const v=variantById(s.variantId);return a+s.qty*(v?v.price:0);},0);
+    return {w,units,val};});
+  const totalUnits=DB.warehouseStock.reduce((a,s)=>a+s.qty,0);
+  V.innerHTML=`
+  <div class="page-head"><div><h1 data-i18n="Warehouses">Warehouses</h1><p>${DB.warehouses.length} warehouses · stock tracked per warehouse + SKU · company total ${egp0(totalUnits)} units</p></div>
+    <div class="ph-actions">${can('editWarehouses')?`<button class="btn primary" onclick="openWarehouseForm()" data-i18n="+ Add Warehouse">+ Add Warehouse</button>`:''}</div></div>
+  <div class="card"><div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th data-i18n="Code">Code</th><th data-i18n="Warehouse">Warehouse</th><th data-i18n="Type">Type</th><th data-i18n="Location">Location</th><th class="num" data-i18n="Units">Units</th><th class="num" data-i18n="Stock Value">Stock Value</th><th data-i18n="Status">Status</th>${can('editWarehouses')?'<th class="num col-act">Actions</th>':''}</tr></thead>
+    <tbody>${rows.length?rows.map(({w,units,val})=>`<tr>
+      <td class="t-strong">${esc(w.code)}</td><td><b>${esc(w.name)}</b></td><td>${whTypeBadge(w.type)}</td><td class="muted">${esc(w.location||'—')}</td>
+      <td class="num t-strong">${egp0(units)}</td><td class="num">${egp(val)}</td><td>${w.active!==false?'<span class="badge b-green">Active</span>':'<span class="badge b-gray">Inactive</span>'}</td>
+      ${can('editWarehouses')?`<td class="num row-act"><button class="icon-act" title="Edit" onclick="openWarehouseForm(${w.id})">&#9998;</button></td>`:''}
+      </tr>`).join(''):`<tr><td colspan="8"><div class="empty"><b>No warehouses</b></div></td></tr>`}</tbody>
+  </table></div></div></div>`;
+};
+function openWarehouseForm(id){
+  if(!requirePerm('editWarehouses','edit warehouses'))return;
+  const w=id?whById(id):null;
+  openModal(`<div class="modal-h"><div><h3>${w?'Edit Warehouse':'Add Warehouse'}</h3></div><button class="x" data-close>&times;</button></div>
+    <div class="modal-b"><div class="form-grid">
+      <div class="form-row"><label>Warehouse Code <span class="req">*</span></label><input id="wh_code" value="${w?esc(w.code):'WH-'+String(DB.warehouses.length+1).padStart(2,'0')}"><span class="err">Enter a code</span></div>
+      <div class="form-row"><label>Warehouse Name <span class="req">*</span></label><input id="wh_name" value="${w?esc(w.name):''}"><span class="err">Enter a name</span></div>
+      <div class="form-row"><label>Type</label><select id="wh_type">${WAREHOUSE_TYPES.map(t=>`<option ${(w?w.type:'Branch')===t?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div class="form-row"><label>Location</label><input id="wh_loc" value="${w?esc(w.location||''):''}"></div>
+      <div class="form-row"><label>Status</label><select id="wh_active"><option value="1" ${!w||w.active!==false?'selected':''}>Active</option><option value="0" ${w&&w.active===false?'selected':''}>Inactive</option></select></div>
+      <div class="form-row full"><label>Notes</label><input id="wh_notes" value="${w?esc(w.notes||''):''}"></div>
+    </div></div>
+    <div class="modal-f"><button class="btn" data-close>Cancel</button><button class="btn primary" id="wh_save">${w?'Save':'Add'}</button></div>`);
+  document.getElementById('wh_save').onclick=()=>{
+    const code=document.getElementById('wh_code').value.trim(),name=document.getElementById('wh_name').value.trim();
+    let bad=markInvalid('wh_code',!code);bad=markInvalid('wh_name',!name)||bad;if(bad){toast('Check the form','Fix highlighted fields','warn');return;}
+    if((!w||w.code!==code)&&DB.warehouses.some(x=>x.code.toLowerCase()===code.toLowerCase())){toast('Duplicate code','That warehouse code exists','err');return;}
+    const data={code,name,type:document.getElementById('wh_type').value,location:document.getElementById('wh_loc').value.trim(),active:document.getElementById('wh_active').value==='1',notes:document.getElementById('wh_notes').value.trim()};
+    if(w){Object.assign(w,data);securePush('warehouse',w);}
+    else{DB.seqWarehouse++;const nw={id:DB.seqWarehouse,...data,createdBy:auditUser(),createdAt:fmtDate(TODAY)};DB.warehouses.push(nw);securePush('warehouse',nw);}
+    closeModal();applyChange('Warehouse saved',name);
+  };
+}
+
+/*----- Bulk Stock In (batch) -----*/
+let bulkState=null;
+function openBulkStockIn(){
+  if(!requirePerm('bulkStockIn','bulk stock in'))return;
+  if(!activeWarehouses().length){toast('No warehouse','Add a warehouse first','warn');return;}
+  bulkState={search:'',expanded:{},qty:{}}; // qty keyed by variantId
+  const whOpts=activeWarehouses().map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('');
+  openModal(`<div class="modal-h"><div><h3>Bulk Stock In / Add Stock Batch</h3><div class="sub">One batch number · each SKU gets its own movement</div></div><button class="x" data-close>&times;</button></div>
+    <div class="modal-b">
+      <div class="form-grid">
+        <div class="form-row"><label>Receiving Warehouse <span class="req">*</span></label><select id="bk_wh">${whOpts}</select></div>
+        <div class="form-row"><label>Batch Date</label><input type="date" id="bk_date" value="${dateToInput(TODAY)}" max="${dateToInput(TODAY)}"></div>
+        <div class="form-row"><label>Batch Number</label><input id="bk_no" value="${nextBatchNo()}"></div>
+        <div class="form-row"><label>Reference</label><input id="bk_ref" placeholder="GRN / supplier"></div>
+        <div class="form-row full"><label>Notes</label><input id="bk_notes"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin:12px 0 8px"><input class="inp" id="bk_search" placeholder="Search product / code / SKU..." style="max-width:280px"><span class="muted" id="bk_count"></span></div>
+      <div id="bk_list" style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:9px"></div>
+      <div id="bk_review" style="margin-top:12px"></div>
+    </div>
+    <div class="modal-f"><button class="btn" data-close>Cancel</button><button class="btn primary" id="bk_post">Post Batch</button></div>`,'xl');
+  document.getElementById('bk_date').onchange=e=>{document.getElementById('bk_no').value=nextBatchNo(parseDateInput(e.target.value));};
+  document.getElementById('bk_search').oninput=e=>{bulkState.search=e.target.value;renderBulkList();};
+  document.getElementById('bk_post').onclick=postBulkBatch;
+  renderBulkList();
+}
+function renderBulkList(){
+  const box=document.getElementById('bk_list');if(!box)return;const q=(bulkState.search||'').toLowerCase();
+  let prods=DB.products.filter(p=>p.active!==false);
+  if(q)prods=prods.filter(p=>p.name.toLowerCase().includes(q)||p.code.toLowerCase().includes(q)||variantsOf(p.id).some(v=>v.sku.toLowerCase().includes(q)));
+  box.innerHTML=prods.map(p=>{const vs=variantsOf(p.id).filter(v=>v.active!==false);const exp=bulkState.expanded[p.id];
+    const selCount=vs.filter(v=>+bulkState.qty[v.id]>0).length;
+    return `<div style="border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer" onclick="bulkToggle(${p.id})">
+        <span>${exp?'&#9662;':'&#9656;'}</span><b>${esc(p.name)}</b> <span class="badge b-gray">${p.code}</span> ${dtypeBadge(p.discountType||'Basic')}
+        ${selCount?`<span class="badge b-green">${selCount} selected</span>`:''}<span class="muted" style="margin-left:auto;font-size:11px">${vs.length} variants</span></div>
+      ${exp?`<div style="padding:0 12px 8px">${vs.map(v=>`<div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+        <span class="t-strong" style="min-width:150px">${v.sku}</span><span class="muted" style="min-width:120px">${v.color} / ${v.size}</span>
+        <span class="muted" style="font-size:11px">on hand ${v.stock}</span>
+        <label style="margin-left:auto;font-size:11px" class="muted">Qty to add</label>
+        <input class="matrix-inp" style="width:80px" type="number" min="0" value="${bulkState.qty[v.id]||''}" placeholder="0" oninput="bulkSetQty(${v.id},this.value)"></div>`).join('')}</div>`:''}
+    </div>`;}).join('')||`<div class="empty" style="padding:20px"><b>No products</b></div>`;
+  document.getElementById('bk_count').textContent=Object.values(bulkState.qty).filter(q=>+q>0).length+' variant lines';
+  renderBulkReview();
+}
+function bulkToggle(pid){bulkState.expanded[pid]=!bulkState.expanded[pid];renderBulkList();}
+function bulkSetQty(vid,val){const n=Math.max(0,+val||0);if(n>0)bulkState.qty[vid]=n;else delete bulkState.qty[vid];renderBulkReview();document.getElementById('bk_count').textContent=Object.values(bulkState.qty).filter(q=>+q>0).length+' variant lines';}
+function renderBulkReview(){const box=document.getElementById('bk_review');if(!box)return;
+  const lines=Object.keys(bulkState.qty).map(vid=>({v:variantById(+vid),qty:+bulkState.qty[vid]})).filter(x=>x.v&&x.qty>0);
+  const totQ=lines.reduce((a,l)=>a+l.qty,0);
+  box.innerHTML=lines.length?`<div class="section-note"><b>Review:</b> ${lines.length} SKU lines · total ${totQ} units → ${esc(whName(+document.getElementById('bk_wh').value))}</div>`:`<div class="muted" style="font-size:12px">Select variants and enter quantities to build the batch.</div>`;
+}
+function postBulkBatch(){
+  const whId=+document.getElementById('bk_wh').value;const date=parseDateInput(document.getElementById('bk_date').value);
+  let batchNo=document.getElementById('bk_no').value.trim()||nextBatchNo(date);
+  const ref=document.getElementById('bk_ref').value.trim(),notes=document.getElementById('bk_notes').value.trim();
+  if(!whId){toast('Missing warehouse','Choose a receiving warehouse','warn');return;}
+  if(DB.stockBatches.some(b=>b.batchNo===batchNo)){toast('Duplicate batch','That batch number already exists','err');return;}
+  const lines=Object.keys(bulkState.qty).map(vid=>({vid:+vid,qty:+bulkState.qty[vid]})).filter(x=>x.qty>0&&variantById(x.vid));
+  if(!lines.length){toast('No lines','Add at least one variant with quantity','warn');return;}
+  if(lines.some(l=>!(l.qty>0)||!Number.isFinite(l.qty))){toast('Invalid qty','Every line needs a positive quantity','warn');return;}
+  // atomic: validated all lines above; now post batch header + one movement per SKU sharing the batch reference
+  DB.seqBatch++;const batch={id:DB.seqBatch,batchNo,warehouseId:whId,date,reference:ref,notes,lineCount:lines.length,totalQty:lines.reduce((a,l)=>a+l.qty,0),createdBy:auditUser(),createdAt:fmtDate(TODAY)};
+  DB.stockBatches.push(batch);securePush('batch',batch);
+  lines.forEach(l=>applyMovement(l.vid,'Stock In',l.qty,0,{warehouseId:whId,date,batchNo,reference:ref||batchNo,notes:'Batch '+batchNo}));
+  closeModal();applyChange('Batch posted',batchNo+' · '+lines.length+' SKUs · '+batch.totalQty+' units into '+whName(whId),{page:'batches'});
+}
+PAGES.batches=function(){
+  const rows=DB.stockBatches.slice().sort((a,b)=>b.id-a.id);
+  V.innerHTML=`
+  <div class="page-head"><div><p style="margin:0"><span class="link" onclick="go('inventory')">Inventory</span> / Stock Batches</p><h1 style="margin-top:4px">Stock Batches</h1><p>${rows.length} batches</p></div>
+    <div class="ph-actions"><button class="btn" onclick="go('inventory')">&#8592; Back</button>${can('bulkStockIn')?`<button class="btn primary" onclick="openBulkStockIn()">+ Bulk Stock In</button>`:''}</div></div>
+  <div class="card"><div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Batch #</th><th>Warehouse</th><th>Date</th><th class="num">Lines</th><th class="num">Total Qty</th><th>Reference</th><th>Created By</th></tr></thead>
+    <tbody>${rows.length?rows.map(b=>`<tr class="clickable" onclick="openBatchDetail(${b.id})"><td class="t-strong">${b.batchNo}</td><td>${esc(whName(b.warehouseId))}</td><td>${fmtDate(b.date)}</td>
+      <td class="num">${b.lineCount}</td><td class="num t-strong">${b.totalQty}</td><td class="muted">${esc(b.reference||'—')}</td><td class="muted">${esc(b.createdBy||'')}</td></tr>`).join(''):`<tr><td colspan="7"><div class="empty"><b>No batches yet</b></div></td></tr>`}</tbody>
+  </table></div></div></div>`;
+};
+function openBatchDetail(id){
+  const b=DB.stockBatches.find(x=>x.id===id);if(!b)return;
+  const mv=DB.inventoryMovements.filter(m=>m.batchNo===b.batchNo).sort((a,b)=>a.id-b.id);
+  openDrawer('Batch '+b.batchNo,`
+    <div class="stat-row" style="margin-bottom:14px"><div class="stat"><div class="lb">Total Qty</div><div class="vl pos">${b.totalQty}</div></div><div class="stat"><div class="lb">Lines</div><div class="vl">${b.lineCount}</div></div></div>
+    <div class="calc-row"><span class="lbl">Warehouse</span><span class="val">${esc(whName(b.warehouseId))}</span></div>
+    <div class="calc-row"><span class="lbl">Date</span><span class="val">${fmtDate(b.date)}</span></div>
+    <div class="calc-row"><span class="lbl">Reference</span><span class="val">${esc(b.reference||'—')}</span></div>
+    <div class="calc-row"><span class="lbl">Notes</span><span class="val" style="max-width:60%;text-align:right">${esc(b.notes||'—')}</span></div>
+    <div class="calc-row"><span class="lbl">Created By</span><span class="val">${esc(b.createdBy||'')} ${esc(b.createdAt||'')}</span></div>
+    <div class="sr-group" style="margin-top:14px">SKU Lines</div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>SKU</th><th class="num">Qty In</th><th class="num">Balance After</th></tr></thead>
+    <tbody>${mv.map(m=>{const v=variantById(m.variantId);return `<tr><td class="t-strong">${v?v.sku:'—'}</td><td class="num pos">+${m.qtyIn}</td><td class="num">${m.balanceAfter}</td></tr>`;}).join('')}</tbody></table></div>`);
+}
+
+/*----- Stock Transfers -----*/
+let trfState=null;
+PAGES.transfers=function(){
+  const rows=DB.stockTransfers.slice().sort((a,b)=>b.id-a.id);
+  V.innerHTML=`
+  <div class="page-head"><div><h1 data-i18n="Stock Transfers">Stock Transfers</h1><p>${rows.length} transfers · move stock between warehouses</p></div>
+    <div class="ph-actions">${can('stockTransfer')?`<button class="btn primary" onclick="openTransferForm()" data-i18n="+ New Transfer">+ New Transfer</button>`:''}</div></div>
+  <div class="card"><div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Transfer #</th><th>From</th><th>To</th><th>Date</th><th class="num">Qty</th><th>Status</th><th>Created By</th></tr></thead>
+    <tbody>${rows.length?rows.map(t=>`<tr class="clickable" onclick="openTransferDetail(${t.id})"><td class="t-strong">${t.transferNo}</td><td>${esc(whName(t.fromWh))}</td><td>${esc(whName(t.toWh))}</td>
+      <td>${fmtDate(t.date)}</td><td class="num t-strong">${t.totalQty}</td><td><span class="badge b-green">${t.status||'Confirmed'}</span></td><td class="muted">${esc(t.createdBy||'')}</td></tr>`).join(''):`<tr><td colspan="7"><div class="empty"><b>No transfers yet</b></div></td></tr>`}</tbody>
+  </table></div></div></div>`;
+};
+function openTransferForm(){
+  if(!requirePerm('stockTransfer','transfer stock'))return;
+  if(activeWarehouses().length<2){toast('Need 2 warehouses','Add at least two warehouses to transfer between','warn');return;}
+  trfState={lines:[],search:''};
+  const whOpts=w=>activeWarehouses().map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  openModal(`<div class="modal-h"><div><h3>New Stock Transfer</h3><div class="sub">${nextTransferNo()}</div></div><button class="x" data-close>&times;</button></div>
+    <div class="modal-b"><div class="form-grid">
+      <div class="form-row"><label>From Warehouse <span class="req">*</span></label><select id="tf_from" onchange="renderTrfLines()">${whOpts()}</select></div>
+      <div class="form-row"><label>To Warehouse <span class="req">*</span></label><select id="tf_to">${whOpts()}</select></div>
+      <div class="form-row"><label>Date</label><input type="date" id="tf_date" value="${dateToInput(TODAY)}" max="${dateToInput(TODAY)}"></div>
+      <div class="form-row full"><label>Reason / Notes</label><input id="tf_notes"></div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px"><h3 style="font-size:14px;margin:0">Lines</h3><input class="inp" id="tf_search" placeholder="Search SKU to add..." style="max-width:260px" oninput="renderTrfPick(this.value)"></div>
+    <div id="tf_pick"></div><div id="tf_lines"></div>
+    </div>
+    <div class="modal-f"><button class="btn" data-close>Cancel</button><button class="btn primary" id="tf_post">Post Transfer</button></div>`,'xl');
+  // default To = a different warehouse
+  const toSel=document.getElementById('tf_to');if(toSel.options.length>1)toSel.selectedIndex=1;
+  document.getElementById('tf_post').onclick=postTransfer;
+  renderTrfLines();
+}
+function renderTrfPick(q){const box=document.getElementById('tf_pick');q=(q||'').toLowerCase();if(!q){box.innerHTML='';return;}
+  const from=+document.getElementById('tf_from').value;
+  let vs=DB.productVariants.filter(v=>v.active!==false&&whStockQty(from,v.id)>0);
+  vs=vs.filter(v=>{const p=productById(v.productId)||{};return v.sku.toLowerCase().includes(q)||(p.name||'').toLowerCase().includes(q);}).slice(0,20);
+  box.innerHTML=`<div class="card" style="margin-bottom:8px"><div class="card-b"><div class="tbl-wrap" style="max-height:180px;overflow:auto"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th class="num">At source</th><th></th></tr></thead>
+    <tbody>${vs.map(v=>{const p=productById(v.productId)||{};return `<tr><td class="t-strong">${v.sku}</td><td>${esc(p.name||'')}</td><td class="num">${whStockQty(from,v.id)}</td><td><button class="btn sm primary" onclick="trfAdd(${v.id})">Add</button></td></tr>`;}).join('')||'<tr><td colspan=4><div class="empty"><b>No SKUs with source stock</b></div></td></tr>'}</tbody></table></div></div></div>`;
+}
+function trfAdd(vid){if(!trfState.lines.find(l=>l.vid===vid)){const v=variantById(vid);trfState.lines.push({vid,sku:v.sku,qty:1});}renderTrfLines();document.getElementById('tf_pick').innerHTML='';document.getElementById('tf_search').value='';}
+function trfSetQty(vid,val){const l=trfState.lines.find(x=>x.vid===vid);if(l)l.qty=Math.max(0,+val||0);renderTrfLines();}
+function trfDel(vid){trfState.lines=trfState.lines.filter(l=>l.vid!==vid);renderTrfLines();}
+function renderTrfLines(){const box=document.getElementById('tf_lines');if(!box)return;const from=+document.getElementById('tf_from').value;
+  box.innerHTML=trfState.lines.length?`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>SKU</th><th class="num">At source</th><th style="width:100px">Qty</th><th></th></tr></thead>
+    <tbody>${trfState.lines.map(l=>{const avail=whStockQty(from,l.vid);const over=l.qty>avail&&!DB.ruleFlags.allowNegativeStock;
+      return `<tr><td class="t-strong">${l.sku}</td><td class="num ${over?'neg':''}">${avail}</td><td><input class="matrix-inp" style="width:80px" type="number" min="1" value="${l.qty}" oninput="trfSetQty(${l.vid},this.value)">${over?'<div style="font-size:10px;color:var(--red)">exceeds stock</div>':''}</td><td><button class="icon-act danger" onclick="trfDel(${l.vid})">&#128465;</button></td></tr>`;}).join('')}</tbody></table></div>`:`<div class="empty" style="padding:16px"><b>No lines</b>Search a SKU above to add</div>`;
+}
+function postTransfer(){
+  const from=+document.getElementById('tf_from').value,to=+document.getElementById('tf_to').value;
+  const date=parseDateInput(document.getElementById('tf_date').value),notes=document.getElementById('tf_notes').value.trim();
+  if(!from||!to){toast('Missing warehouse','Select both warehouses','warn');return;}
+  if(from===to){toast('Same warehouse','From and To must differ','err');return;}
+  const lines=trfState.lines.filter(l=>l.qty>0);
+  if(!lines.length){toast('No lines','Add at least one line','warn');return;}
+  if(!DB.ruleFlags.allowNegativeStock){const short=lines.filter(l=>l.qty>whStockQty(from,l.vid));
+    if(short.length){toast('Not enough stock',short.map(l=>l.sku+': have '+whStockQty(from,l.vid)+', need '+l.qty).slice(0,4).join(' · '),'err');return;}}
+  const transferNo=nextTransferNo();
+  if(DB.stockTransfers.some(t=>t.transferNo===transferNo)){toast('Duplicate transfer','Transfer number exists','err');return;}
+  DB.seqTransfer++;const t={id:DB.seqTransfer,transferNo,fromWh:from,toWh:to,date,notes,status:'Confirmed',totalQty:lines.reduce((a,l)=>a+l.qty,0),createdBy:auditUser(),createdAt:fmtDate(TODAY)};
+  DB.stockTransfers.push(t);securePush('transfer',t);
+  lines.forEach(l=>{applyMovement(l.vid,'Warehouse Transfer Out',0,l.qty,{warehouseId:from,date,transferId:t.id,reference:transferNo,notes:'Transfer to '+whName(to)});
+    applyMovement(l.vid,'Warehouse Transfer In',l.qty,0,{warehouseId:to,date,transferId:t.id,reference:transferNo,notes:'Transfer from '+whName(from)});});
+  closeModal();applyChange('Transfer posted',transferNo+' · '+whName(from)+' → '+whName(to),{page:'transfers'});
+}
+function openTransferDetail(id){
+  const t=DB.stockTransfers.find(x=>x.id===id);if(!t)return;
+  const mv=DB.inventoryMovements.filter(m=>m.transferId===t.id).sort((a,b)=>a.id-b.id);
+  openDrawer('Transfer '+t.transferNo,`
+    <div class="calc-row"><span class="lbl">From</span><span class="val">${esc(whName(t.fromWh))}</span></div>
+    <div class="calc-row"><span class="lbl">To</span><span class="val">${esc(whName(t.toWh))}</span></div>
+    <div class="calc-row"><span class="lbl">Date</span><span class="val">${fmtDate(t.date)}</span></div>
+    <div class="calc-row"><span class="lbl">Total Qty</span><span class="val">${t.totalQty}</span></div>
+    <div class="calc-row"><span class="lbl">Notes</span><span class="val" style="max-width:60%;text-align:right">${esc(t.notes||'—')}</span></div>
+    <div class="sr-group" style="margin-top:14px">Movements</div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>SKU</th><th>Type</th><th class="num">Out</th><th class="num">In</th><th class="num">Bal</th></tr></thead>
+    <tbody>${mv.map(m=>{const v=variantById(m.variantId);return `<tr><td class="t-strong">${v?v.sku:''}</td><td>${movementBadgeV3(m.type)}</td><td class="num neg">${m.qtyOut||''}</td><td class="num pos">${m.qtyIn||''}</td><td class="num">${m.balanceAfter}</td></tr>`;}).join('')}</tbody></table></div>`);
+}
+
+/*----- RETURNS / REVERSE INVOICES (standalone module linked to the original invoice) -----*/
+// How much of an original invoice line has already been returned (Draft + Confirmed count; Cancelled excluded).
+function qtyReturnedForLine(originalLineId,excludeReturnId){
+  return DB.returnLines.filter(rl=>rl.originalLineId===originalLineId).reduce((s,rl)=>{
+    const r=DB.returnInvoices.find(x=>x.id===rl.returnId);
+    if(!r||r.docStatus==='Cancelled'||r.id===excludeReturnId)return s;
+    return s+(+rl.returnQty||0);},0);
+}
+function lineReturnableQty(line,excludeReturnId){return Math.max(0,(+line.qty||0)-qtyReturnedForLine(line.id,excludeReturnId));}
+// Historical SNAPSHOT: a return line always uses the original sale's price / discount% / commission type.
+function retLineCompute(origLine,qty){
+  const q=Math.max(0,Math.floor(+qty||0));
+  const unit=+origLine.unitPrice||0;
+  const gross=round(q*unit,2);
+  const pct=origLine.appliedDiscountPercent!=null?+origLine.appliedDiscountPercent:0;
+  const discAmt=round(gross*pct/100,2), net=round(gross-discAmt,2);
+  return {q,unit,gross,pct,discAmt,net,discountType:origLine.discountType||'Basic',commissionType:origLine.commissionType||commissionTypeFor(origLine.discountType||'Basic')};
+}
+// Commission earned to date on the returned quantity of a line = (Basic earned so far + Custom for that line) × returned/sold.
+function returnReversalForLines(getLines){
+  let rev=0;
+  getLines().forEach(({ol,q})=>{const soldQty=+ol.qty||0;if(soldQty<=0||q<=0)return;const prop=q/soldQty;
+    const basicEarned=DB.commissionTxns.filter(x=>x.invoiceLineId===ol.id).reduce((s,x)=>s+x.commissionAmount,0);
+    const customEarned=DB.customCommissions.filter(x=>x.invoiceLineId===ol.id&&x.status!=='Cancelled'&&x.status!=='Rejected'&&(x.kind||'Manual')!=='ReturnReversal').reduce((s,x)=>s+(+x.amount||0),0);
+    rev+=round((basicEarned+customEarned)*prop,2);});
+  return round(rev,2);
+}
+function returnReversalAmount(ret){return returnReversalForLines(()=>DB.returnLines.filter(rl=>rl.returnId===ret.id).map(rl=>({ol:DB.invoiceLines.find(l=>l.id===rl.originalLineId),q:rl.returnQty})).filter(x=>x.ol));}
+
+let retState=null; // { invoiceId, editId, qty:{originalLineId:n} }
+function openReturnForm(id){
+  if(!requirePerm('createReturn','create returns'))return;
+  if(!activeWarehouses().length){toast('No warehouse','Add a warehouse first','warn');return;}
+  const editing=id?DB.returnInvoices.find(r=>r.id===id):null;
+  if(editing&&editing.docStatus!=='Draft'){toast('Locked','Only Draft returns can be edited','warn');return;}
+  const eligible=DB.invoices.filter(i=>isConfirmed(i)&&linesOf(i.id).some(l=>lineReturnableQty(l,id)>0));
+  if(!editing&&!eligible.length){toast('Nothing to return','No confirmed invoice has returnable quantity','warn');return;}
+  retState={invoiceId:editing?editing.originalInvoiceId:0,editId:id||null,qty:{}};
+  if(editing)DB.returnLines.filter(rl=>rl.returnId===editing.id).forEach(rl=>{retState.qty[rl.originalLineId]=rl.returnQty;});
+  const invOpts=eligible.map(i=>`<option value="${i.id}" ${retState.invoiceId===i.id?'selected':''}>${i.invoiceNumber} · ${esc(custName(i.customerId))} · ${egp0(i.amount)}</option>`).join('');
+  const whOpts=activeWarehouses().map(w=>`<option value="${w.id}" ${editing&&editing.warehouseId===w.id?'selected':''}>${esc(w.name)}</option>`).join('');
+  const reasonOpts=DB.returnReasons.map(r=>`<option ${editing&&editing.reason===r?'selected':''}>${esc(r)}</option>`).join('');
+  openModal(`<div class="modal-h"><div><h3>${editing?'Edit Return':'New Return / Reverse Invoice'}</h3><div class="sub">${editing?editing.returnNo:nextReturnNo()}</div></div><button class="x" data-close>&times;</button></div>
+    <div class="modal-b">
+      <div class="form-grid">
+        <div class="form-row"><label>Original Invoice <span class="req">*</span></label><select id="rt_inv" ${editing?'disabled':''} onchange="retPickInvoice()">${editing?`<option value="${editing.originalInvoiceId}" selected>${esc(invNo(editing.originalInvoiceId))}</option>`:'<option value="">Select…</option>'+invOpts}</select></div>
+        <div class="form-row"><label>Return Date</label><input type="date" id="rt_date" value="${editing?toDateInput(editing.date):dateToInput(TODAY)}" max="${dateToInput(TODAY)}"></div>
+        <div class="form-row"><label>Receiving Warehouse <span class="req">*</span></label><select id="rt_wh">${whOpts}</select></div>
+        <div class="form-row"><label>Reason <span class="req">*</span></label><select id="rt_reason">${reasonOpts}</select></div>
+        <div class="form-row full"><label>Notes</label><input id="rt_notes" value="${editing?esc(editing.notes||''):''}"></div>
+      </div>
+      <div id="rt_meta" class="section-note" style="display:none"></div>
+      <h3 style="font-size:14px;margin:14px 0 6px">Lines to Return <span class="muted" style="font-weight:400;font-size:11px">— historical pricing, capped at (sold − already returned)</span></h3>
+      <div id="rt_lines"></div>
+      <div id="rt_summary" style="margin-top:12px"></div>
+      <div id="rt_treat" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-f"><button class="btn" data-close>Cancel</button><button class="btn" id="rt_draft">Save as Draft</button><button class="btn primary" id="rt_confirm">Save &amp; Confirm</button></div>`,'xl');
+  document.getElementById('rt_draft').onclick=()=>saveReturnDoc(id,false);
+  document.getElementById('rt_confirm').onclick=()=>saveReturnDoc(id,true);
+  renderRetLines();
+}
+function retPickInvoice(){retState.invoiceId=+document.getElementById('rt_inv').value;retState.qty={};renderRetLines();}
+function renderRetLines(){
+  const box=document.getElementById('rt_lines');if(!box)return;
+  const meta=document.getElementById('rt_meta');
+  const inv=invById(retState.invoiceId);
+  if(!inv){box.innerHTML='<div class="empty" style="padding:16px"><b>Pick an original invoice</b></div>';document.getElementById('rt_summary').innerHTML='';document.getElementById('rt_treat').innerHTML='';if(meta)meta.style.display='none';return;}
+  if(meta){meta.style.display='';meta.innerHTML=`Customer <b>${esc(custName(inv.customerId))}</b> · Salesperson <b>${esc(repName(inv.salespersonId))}</b> · Invoice outstanding <b>${egp(inv.balance)}</b> of ${egp(inv.amount)} · ${inv.invoiceNumber}`;}
+  const lines=linesOf(inv.id);
+  box.innerHTML=lines.length?`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>SKU / Product</th><th>Type</th><th class="num">Sold</th><th class="num">Already Ret.</th><th class="num">Returnable</th><th style="width:88px">Return Qty</th><th class="num">Unit</th><th class="num">Net Return</th></tr></thead>
+    <tbody>${lines.map(l=>{const cap=lineReturnableQty(l,retState.editId);const already=qtyReturnedForLine(l.id,retState.editId);const q=Math.min(+retState.qty[l.id]||0,cap);const c=retLineCompute(l,q);
+      return `<tr><td><b>${l.sku}</b><br><small class="muted">${esc((productById(l.productId)||{}).name||'')} · ${l.color}/${l.size}</small></td>
+      <td>${dtypeBadge(l.discountType||'Basic')}</td><td class="num">${l.qty}</td><td class="num">${already}</td><td class="num t-strong">${cap}</td>
+      <td>${cap>0?`<input class="matrix-inp" style="width:74px" type="number" min="0" max="${cap}" value="${retState.qty[l.id]||''}" placeholder="0" oninput="retSetQty(${l.id},${cap},this)">`:'<span class="muted">—</span>'}</td>
+      <td class="num">${egp0(l.unitPrice)}</td><td class="num t-strong" id="rt_net_${l.id}">${egp0(c.net)}</td></tr>`;}).join('')}</tbody></table></div>`:'<div class="section-note">This invoice has no itemized lines — nothing to return line-by-line.</div>';
+  renderRetSummary();
+}
+function retSetQty(lineId,cap,el){let n=Math.max(0,Math.floor(+el.value||0));if(n>cap){n=cap;el.value=cap;}
+  if(n>0)retState.qty[lineId]=n;else delete retState.qty[lineId];
+  const inv=invById(retState.invoiceId);const l=inv?linesOf(inv.id).find(x=>x.id===lineId):null;
+  const cell=document.getElementById('rt_net_'+lineId);if(cell&&l)cell.textContent=egp0(retLineCompute(l,n).net);
+  renderRetSummary();
+}
+function retTotals(){
+  const inv=invById(retState.invoiceId);if(!inv)return null;
+  let gross=0,disc=0,net=0;const detail=[];
+  linesOf(inv.id).forEach(l=>{const cap=lineReturnableQty(l,retState.editId);const q=Math.min(+retState.qty[l.id]||0,cap);if(q>0){const c=retLineCompute(l,q);gross+=c.gross;disc+=c.discAmt;net+=c.net;detail.push({l,c});}});
+  gross=round(gross,2);disc=round(disc,2);net=round(net,2);
+  const outstanding=Math.max(0,inv.balance);
+  const arReduction=round(Math.min(net,outstanding),2);
+  const excess=round(net-arReduction,2);
+  return {inv,gross,disc,net,outstanding,arReduction,excess,detail};
+}
+function renderRetSummary(){
+  const box=document.getElementById('rt_summary');const tb=document.getElementById('rt_treat');if(!box)return;
+  const t=retTotals();
+  if(!t||t.net<=0){box.innerHTML='<div class="muted" style="font-size:12px">Enter return quantities to build the return.</div>';if(tb)tb.innerHTML='';return;}
+  box.innerHTML=`<div style="max-width:380px;margin-left:auto">
+    <div class="calc-row"><span class="lbl">Gross Return</span><span class="val">${egp(t.gross)}</span></div>
+    <div class="calc-row"><span class="lbl">Return Discount</span><span class="val neg">− ${egp0(t.disc)}</span></div>
+    <div class="calc-total"><span class="lbl">Net Return Value</span><span class="val">${egp(t.net)}</span></div>
+    <div class="calc-row"><span class="lbl">Invoice Outstanding</span><span class="val">${egp(t.outstanding)}</span></div>
+    <div class="calc-row"><span class="lbl">Reduces Receivable (AR)</span><span class="val pos">− ${egp0(t.arReduction)}</span></div>
+    ${t.excess>0?`<div class="calc-row"><span class="lbl">Excess (customer already paid)</span><span class="val">${egp(t.excess)}</span></div>`:''}</div>`;
+  let html='';
+  if(t.excess>0){
+    html+=`<div class="section-note" style="border-color:#f4d58d;background:var(--amber-bg)"><b>Financial treatment required</b> — the return value exceeds what the customer still owes by <b>${egp(t.excess)}</b>. Choose how to settle it:
+      <div style="margin-top:8px;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+        <label><input type="radio" name="rt_fin" value="Credit" checked> Customer Credit (apply to future invoices)</label>
+        <label><input type="radio" name="rt_fin" value="Refund"> Refund (cash / bank out)</label></div>
+      <div id="rt_refund" style="display:none;margin-top:8px"><div class="form-grid">
+        <div class="form-row"><label>Refund Method</label><select id="rt_rmethod"><option>Cash</option><option>Bank Transfer</option><option>Cheque</option><option>Card</option></select></div>
+        <div class="form-row"><label>Refund Date</label><input type="date" id="rt_rdate" value="${dateToInput(TODAY)}"></div>
+        <div class="form-row"><label>Reference</label><input id="rt_rref" placeholder="Payment ref"></div></div></div></div>`;
+  }
+  html+=`<div class="section-note"><b>Commission treatment required</b> — how should salesperson commission on the returned goods be handled?
+      <div style="margin-top:8px;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+        <label><input type="radio" name="rt_comm" value="Keep" checked> Keep (no change)</label>
+        <label><input type="radio" name="rt_comm" value="Reverse"> Reverse (post a negative commission adjustment)</label></div>
+      <div id="rt_revprev" class="muted" style="font-size:11.5px;margin-top:6px"></div></div>`;
+  tb.innerHTML=html;
+  if(t.excess>0){tb.querySelectorAll('input[name=rt_fin]').forEach(r=>r.onchange=()=>{document.getElementById('rt_refund').style.display=tb.querySelector('input[name=rt_fin]:checked').value==='Refund'?'':'none';});}
+  const prev=document.getElementById('rt_revprev');
+  const showRev=()=>{const rev=returnReversalForLines(()=>t.detail.map(d=>({ol:d.l,q:d.c.q})));prev.innerHTML=(tb.querySelector('input[name=rt_comm]:checked').value==='Reverse')?`Estimated negative adjustment: <b class="neg">− ${egp0(rev)}</b> (commission earned to date on the returned quantity).`:'';};
+  tb.querySelectorAll('input[name=rt_comm]').forEach(r=>r.onchange=showRev);showRev();
+}
+function saveReturnDoc(id,confirmNow){
+  const inv=invById(retState.invoiceId);
+  if(!inv){toast('No invoice','Select an original invoice','warn');return;}
+  const whId=+document.getElementById('rt_wh').value;
+  const reason=document.getElementById('rt_reason').value;
+  const date=parseDateInput(document.getElementById('rt_date').value);
+  const notes=document.getElementById('rt_notes').value.trim();
+  if(!whId){toast('No warehouse','Choose a receiving warehouse','warn');return;}
+  if(!reason){toast('No reason','A return reason is required','warn');return;}
+  const t=retTotals();
+  if(!t||t.net<=0||!t.detail.length){toast('No lines','Enter at least one return quantity','warn');return;}
+  const finEl=document.querySelector('input[name=rt_fin]:checked');
+  const financialTreatment=t.excess>0?(finEl?finEl.value:'Credit'):'';
+  const commEl=document.querySelector('input[name=rt_comm]:checked');
+  const commissionTreatment=commEl?commEl.value:'Keep';
+  const refundMethod=(financialTreatment==='Refund'&&document.getElementById('rt_rmethod'))?document.getElementById('rt_rmethod').value:'';
+  const refundDate=(financialTreatment==='Refund'&&document.getElementById('rt_rdate'))?document.getElementById('rt_rdate').value:'';
+  const refundRef=(financialTreatment==='Refund'&&document.getElementById('rt_rref'))?document.getElementById('rt_rref').value.trim():'';
+  let ret=id?DB.returnInvoices.find(r=>r.id===id):null;
+  if(!ret){DB.seqReturn++;ret={id:DB.seqReturn,returnNo:'RTN-'+pad6(DB.seqReturn),docStatus:'Draft',stockPosted:false,createdBy:auditUser(),createdAt:fmtDate(TODAY),confirmedBy:'',confirmedAt:'',cancelledBy:'',cancelledAt:''};DB.returnInvoices.push(ret);}
+  Object.assign(ret,{originalInvoiceId:inv.id,customerId:inv.customerId,salespersonId:inv.salespersonId,warehouseId:whId,date,reason,notes,
+    grossReturn:t.gross,discountReturn:t.disc,netReturn:t.net,arReduction:t.arReduction,excessAmount:t.excess,
+    financialTreatment,refundMethod,refundDate,refundRef,commissionTreatment});
+  const oldLineIds=DB.returnLines.filter(rl=>rl.returnId===ret.id).map(rl=>rl.id);
+  DB.returnLines=DB.returnLines.filter(rl=>rl.returnId!==ret.id);
+  const newLines=t.detail.map(({l,c})=>{DB.seqReturnLine++;const nl={id:DB.seqReturnLine,returnId:ret.id,originalLineId:l.id,productId:l.productId,variantId:l.variantId,sku:l.sku,color:l.color,size:l.size,returnQty:c.q,unitPrice:c.unit,discountType:c.discountType,appliedDiscountPercent:c.pct,grossReturn:c.gross,discountAmount:c.discAmt,netReturn:c.net,commissionType:c.commissionType};DB.returnLines.push(nl);return nl;});
+  if(secureMode()){(async()=>{try{oldLineIds.forEach(lid=>secureRemove('returnline',lid));await sbUpsert('return_invoices',TMAP.return_invoices.to(ret));for(const nl of newLines){await sbUpsert('return_lines',TMAP.return_lines.to(nl));}}catch(e){toast('Cloud save failed',e.message,'err');}})();}
+  closeModal();
+  if(confirmNow){if(!doConfirmReturn(ret)){rebuild();renderNav();go('return',{id:ret.id});return;}}
+  else{securePush('return',ret);rebuild();renderNav();}
+  FLASH_NEXT=true;go('return',{id:ret.id});
+  toast(id?'Return saved':'Return created',ret.returnNo+(confirmNow?' · confirmed & stock received':' · saved as Draft'),'ok');
+}
+// posting: returns true if posted, false if blocked (kept Draft)
+function doConfirmReturn(ret){
+  if(ret.docStatus==='Confirmed')return true;
+  const inv=invById(ret.originalInvoiceId);
+  if(!inv||!isConfirmed(inv)){toast('Cannot confirm','The original invoice must be a confirmed invoice','err');return false;}
+  if((ret.excessAmount||0)>0.5&&!ret.financialTreatment){toast('Choose treatment','Select Credit or Refund for the excess','err');return false;}
+  if(!ret.commissionTreatment){toast('Choose treatment','Select a commission treatment (Keep / Reverse)','err');return false;}
+  if(!ret.stockPosted){
+    DB.returnLines.filter(rl=>rl.returnId===ret.id).forEach(rl=>applyMovement(rl.variantId,'Return / Reverse Invoice',rl.returnQty,0,{returnId:ret.id,warehouseId:ret.warehouseId,date:ret.date,reference:ret.returnNo,notes:'Return of '+inv.invoiceNumber}));
+    ret.stockPosted=true;
+  }
+  ret.docStatus='Confirmed';ret.confirmedBy=auditUser();ret.confirmedAt=fmtDate(TODAY);
+  if((ret.excessAmount||0)>0.5&&ret.financialTreatment==='Credit'&&!DB.customerCredits.some(cc=>cc.returnId===ret.id)){
+    DB.seqCredit++;const credit={id:DB.seqCredit,customerId:ret.customerId,returnId:ret.id,date:ret.date,amount:ret.excessAmount,appliedAmount:0,notes:'Credit from return '+ret.returnNo,createdBy:auditUser()};
+    DB.customerCredits.push(credit);securePush('credit',credit);
+  }
+  if(ret.commissionTreatment==='Reverse'&&!DB.customCommissions.some(x=>x.returnId===ret.id&&(x.kind||'')==='ReturnReversal'&&x.status!=='Cancelled')){
+    const amt=returnReversalAmount(ret);
+    if(amt>0){DB.seqCustom++;const adj=stampCreate({id:DB.seqCustom,salespersonId:ret.salespersonId,customerId:ret.customerId,invoiceId:ret.originalInvoiceId,invoiceLineId:null,returnId:ret.id,kind:'ReturnReversal',date:fmtDate(TODAY),type:'Fixed Amount',baseAmount:null,percentage:null,amount:-amt,description:'Commission reversal for return '+ret.returnNo,notes:'Auto negative adjustment · '+ret.reason,status:'Approved'});DB.customCommissions.push(adj);securePush('custom',adj);}
+  }
+  securePush('return',ret);
+  return true;
+}
+function confirmReturn(id){
+  if(!requirePerm('confirmReturn','confirm returns'))return;
+  const ret=DB.returnInvoices.find(r=>r.id===id);if(!ret||ret.docStatus==='Confirmed')return;
+  if(!doConfirmReturn(ret))return;
+  rebuild();renderNav();FLASH_NEXT=true;go('return',{id});
+  toast('Return confirmed',ret.returnNo+' · stock received & receivable reduced','ok');
+}
+function cancelReturnDoc(id){
+  if(!requirePerm('cancelReturn','cancel returns'))return;
+  const ret=DB.returnInvoices.find(r=>r.id===id);if(!ret||ret.docStatus!=='Confirmed')return;
+  confirmDialog('Cancel Return',`<div class="section-note" style="border-color:#f3c7c7;background:var(--red-bg);color:var(--red)">Cancel <b>${ret.returnNo}</b>? Received stock will be reversed out, any customer credit removed, the AR reduction undone, and any commission reversal voided.</div>`,()=>{
+    if(ret.stockPosted){DB.returnLines.filter(rl=>rl.returnId===ret.id).forEach(rl=>applyMovement(rl.variantId,'Return Reversal',0,rl.returnQty,{returnId:ret.id,warehouseId:ret.warehouseId,reference:ret.returnNo,notes:'Return cancelled'}));ret.stockPosted=false;}
+    DB.customerCredits.filter(cc=>cc.returnId===ret.id).forEach(cc=>secureRemove('credit',cc.id));DB.customerCredits=DB.customerCredits.filter(cc=>cc.returnId!==ret.id);
+    DB.customCommissions.filter(x=>x.returnId===ret.id&&(x.kind||'')==='ReturnReversal'&&x.status!=='Cancelled').forEach(x=>{x.status='Cancelled';stampUpdate(x);securePush('custom',x);});
+    ret.docStatus='Cancelled';ret.cancelledBy=auditUser();ret.cancelledAt=fmtDate(TODAY);securePush('return',ret);
+    rebuild();renderNav();FLASH_NEXT=true;go('return',{id});
+    toast('Return cancelled',ret.returnNo+' reversed','ok');
+  },true);
+}
+function deleteReturn(id){
+  const ret=DB.returnInvoices.find(r=>r.id===id);if(!ret)return;
+  if((ret.docStatus||'Draft')!=='Draft'){toast('Use Cancel','Only Draft returns can be deleted','warn');return;}
+  if(!requirePerm('createReturn','delete returns'))return;
+  confirmDialog('Delete Draft Return',`<div class="section-note">Remove draft <b>${ret.returnNo}</b>? Nothing was posted for a draft.</div>`,()=>{
+    DB.returnLines.filter(rl=>rl.returnId===id).forEach(rl=>secureRemove('returnline',rl.id));DB.returnLines=DB.returnLines.filter(rl=>rl.returnId!==id);
+    DB.returnInvoices=DB.returnInvoices.filter(r=>r.id!==id);secureRemove('return',id);
+    applyChange('Draft return deleted',ret.returnNo+' removed',{page:'returns'});},true);
+}
+const retListState={search:'',status:'',reason:'',page:1};
+PAGES.returns=function(){
+  const all=DB.returnInvoices;const confirmed=all.filter(r=>r.docStatus==='Confirmed');
+  const totalNet=confirmed.reduce((s,r)=>s+(+r.netReturn||0),0);
+  const totalAR=confirmed.reduce((s,r)=>s+(+r.arReduction||0),0);
+  const totalCredit=confirmed.filter(r=>r.financialTreatment==='Credit').reduce((s,r)=>s+(+r.excessAmount||0),0);
+  const totalRefund=confirmed.filter(r=>r.financialTreatment==='Refund').reduce((s,r)=>s+(+r.excessAmount||0),0);
+  V.innerHTML=`
+  <div class="page-head"><div><h1 data-i18n="Returns / Reverse Invoices">Returns / Reverse Invoices</h1><p>${all.length} returns · ${confirmed.length} confirmed · linked to original invoices with historical pricing</p></div>
+    <div class="ph-actions">${can('createReturn')?`<button class="btn primary" onclick="openReturnForm()" data-i18n="+ New Return">+ New Return</button>`:''}</div></div>
+  <div class="stat-row row-gap">
+    <div class="stat"><div class="lb">Confirmed Returns</div><div class="vl">${confirmed.length}</div></div>
+    <div class="stat"><div class="lb">Net Return Value</div><div class="vl neg">${egp(totalNet)}</div></div>
+    <div class="stat"><div class="lb">Receivable Reduced</div><div class="vl">${egp(totalAR)}</div></div>
+    <div class="stat"><div class="lb">Customer Credit</div><div class="vl">${egp(totalCredit)}</div></div>
+    <div class="stat"><div class="lb">Refunds</div><div class="vl">${egp(totalRefund)}</div></div>
+  </div>
+  <div class="card"><div class="card-b">
+    <div class="filters">
+      <div class="fld"><label>Search</label><input class="inp" id="rt_search" placeholder="Return # / invoice / customer" value="${esc(retListState.search)}" style="width:220px"></div>
+      <div class="fld"><label>Status</label><select class="inp" id="rt_fstatus"><option value="">All</option><option>Draft</option><option>Confirmed</option><option>Cancelled</option></select></div>
+      <div class="fld"><label>Reason</label><select class="inp" id="rt_freason"><option value="">All reasons</option>${DB.returnReasons.map(r=>`<option>${esc(r)}</option>`).join('')}</select></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn sm" onclick="resetRetFilters()">Clear</button></div>
+      ${can('exportMovements')?`<div class="fld"><label>&nbsp;</label><button class="btn sm" onclick="exportReturnsCSV()">&#8681; Export</button></div>`:''}
+    </div>
+    <div id="retTable"></div>
+  </div></div>`;
+  const b=id=>document.getElementById(id);b('rt_fstatus').value=retListState.status;b('rt_freason').value=retListState.reason;
+  b('rt_search').oninput=e=>{retListState.search=e.target.value;retListState.page=1;renderRetTable();};
+  b('rt_fstatus').onchange=e=>{retListState.status=e.target.value;retListState.page=1;renderRetTable();};
+  b('rt_freason').onchange=e=>{retListState.reason=e.target.value;retListState.page=1;renderRetTable();};
+  renderRetTable();
+};
+function filteredReturns(){
+  let data=DB.returnInvoices.slice().sort((a,b)=>b.id-a.id);
+  if(retListState.search){const q=retListState.search.toLowerCase();data=data.filter(r=>r.returnNo.toLowerCase().includes(q)||invNo(r.originalInvoiceId).toLowerCase().includes(q)||custName(r.customerId).toLowerCase().includes(q));}
+  if(retListState.status)data=data.filter(r=>(r.docStatus||'Draft')===retListState.status);
+  if(retListState.reason)data=data.filter(r=>r.reason===retListState.reason);
+  return data;
+}
+function renderRetTable(){
+  const data=filteredReturns();
+  const per=12,total=data.length,pages=Math.max(1,Math.ceil(total/per));if(retListState.page>pages)retListState.page=pages;
+  const slice=data.slice((retListState.page-1)*per,retListState.page*per);
+  const body=slice.length?slice.map(r=>`<tr class="clickable" onclick="go('return',{id:${r.id}})">
+    <td class="t-strong link">${r.returnNo}</td><td>${esc(invNo(r.originalInvoiceId))}</td><td>${esc(custName(r.customerId))}</td>
+    <td>${fmtDate(r.date)}</td><td>${esc(r.reason||'')}</td><td class="num neg">${egp0(r.netReturn||0)}</td>
+    <td>${r.excessAmount>0?(r.financialTreatment==='Refund'?'<span class="badge b-amber">Refund '+egp0(r.excessAmount)+'</span>':'<span class="badge b-blue">Credit '+egp0(r.excessAmount)+'</span>'):'<span class="muted">—</span>'}</td>
+    <td>${r.commissionTreatment==='Reverse'?'<span class="badge b-red">Reversed</span>':'<span class="badge b-gray">Kept</span>'}</td>
+    <td>${returnStatusBadge(r.docStatus||'Draft')}</td></tr>`).join(''):`<tr><td colspan="9"><div class="empty"><div class="e-ic">&#8617;</div><b>No returns match</b></div></td></tr>`;
+  document.getElementById('retTable').innerHTML=`<div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Return #</th><th>Invoice</th><th>Customer</th><th>Date</th><th>Reason</th><th class="num">Net Return</th><th>Excess</th><th>Commission</th><th>Status</th></tr></thead>
+    <tbody>${body}</tbody></table></div>
+    <div class="pager"><span class="pg-info">Showing ${total?(retListState.page-1)*per+1:0}–${Math.min(total,retListState.page*per)} of ${total}</span>
+     <button onclick="retPage(${retListState.page-1})" ${retListState.page<=1?'disabled':''}>&#8249;</button><span>Page ${retListState.page} / ${pages}</span>
+     <button onclick="retPage(${retListState.page+1})" ${retListState.page>=pages?'disabled':''}>&#8250;</button></div>`;
+}
+function resetRetFilters(){Object.assign(retListState,{search:'',status:'',reason:'',page:1});PAGES.returns();}
+function retPage(p){retListState.page=p;renderRetTable();}
+function exportReturnsCSV(){
+  if(!requirePerm('exportMovements','export'))return;
+  const rows=[['Return No','Invoice','Customer','Salesperson','Date','Reason','Warehouse','Gross','Discount','Net','AR Reduction','Excess','Financial Treatment','Refund Method','Commission Treatment','Status']];
+  filteredReturns().forEach(r=>rows.push([r.returnNo,invNo(r.originalInvoiceId),custName(r.customerId),repName(r.salespersonId),fmtDate(r.date),r.reason||'',whName(r.warehouseId),r.grossReturn||0,r.discountReturn||0,r.netReturn||0,r.arReduction||0,r.excessAmount||0,r.financialTreatment||'',r.refundMethod||'',r.commissionTreatment||'',r.docStatus||'Draft']));
+  downloadCSV('returns.csv',rows);toast('Export ready','returns.csv downloaded','ok');
+}
+PAGES.return=function(p){
+  const ret=DB.returnInvoices.find(r=>r.id===p.id);if(!ret){V.innerHTML='Not found';return;}
+  const inv=invById(ret.originalInvoiceId);const cust=custById(ret.customerId);const ds=ret.docStatus||'Draft';
+  const lines=DB.returnLines.filter(rl=>rl.returnId===ret.id);
+  const moves=DB.inventoryMovements.filter(m=>m.returnId===ret.id).sort((a,b)=>a.id-b.id);
+  const credit=DB.customerCredits.find(cc=>cc.returnId===ret.id);
+  const adj=DB.customCommissions.find(x=>x.returnId===ret.id&&(x.kind||'')==='ReturnReversal'&&x.status!=='Cancelled');
+  V.innerHTML=`
+  <div class="page-head"><div>
+    <p style="margin:0"><span class="link" onclick="go('returns')">Returns</span> / ${ret.returnNo}</p>
+    <h1 style="margin-top:4px">${ret.returnNo} ${returnStatusBadge(ds)}</h1>
+    <p>${inv?`<span class="link" onclick="go('invoice',{id:${inv.id}})">${inv.invoiceNumber}</span> · `:''}<span class="link" onclick="go('customer',{id:${cust?cust.id:0}})">${esc(custName(ret.customerId))}</span> · Salesperson ${esc(repName(ret.salespersonId))} · Receiving ${esc(whName(ret.warehouseId))} · Reason ${esc(ret.reason||'')}${ret.confirmedBy?` · Confirmed by ${esc(ret.confirmedBy)} ${esc(ret.confirmedAt||'')}`:''}</p></div>
+    <div class="ph-actions"><button class="btn" onclick="go('returns')">&#8592; Back</button>
+      ${ds==='Draft'&&can('createReturn')?`<button class="btn" onclick="openReturnForm(${ret.id})">&#9998; Edit</button>`:''}
+      ${ds==='Draft'&&can('confirmReturn')?`<button class="btn green" onclick="confirmReturn(${ret.id})">&#10003; Confirm / Post</button>`:''}
+      ${ds==='Confirmed'&&can('cancelReturn')?`<button class="btn danger" onclick="cancelReturnDoc(${ret.id})">Cancel</button>`:''}
+      ${ds==='Draft'&&can('createReturn')?`<button class="btn danger" onclick="deleteReturn(${ret.id})">Delete</button>`:''}</div></div>
+  ${ds==='Draft'?`<div class="section-note" style="background:#f8f9fb"><b>Draft</b> — no stock, receivable, credit or commission effect until it is <b>Confirmed / Posted</b>.</div>`:''}
+  ${ds==='Cancelled'?`<div class="section-note" style="background:var(--red-bg);border-color:#f3c7c7;color:var(--red)"><b>Cancelled</b> — received stock reversed, credit/commission adjustments voided.</div>`:''}
+  <div class="stat-row row-gap">
+    <div class="stat"><div class="lb">Net Return Value</div><div class="vl neg">${egp(ret.netReturn)}</div><div class="sm">Gross ${egp0(ret.grossReturn)} · disc ${egp0(ret.discountReturn)}</div></div>
+    <div class="stat"><div class="lb">Receivable Reduced</div><div class="vl">${egp(ret.arReduction)}</div></div>
+    <div class="stat"><div class="lb">Excess</div><div class="vl">${egp(ret.excessAmount)}</div><div class="sm">${ret.excessAmount>0?esc(ret.financialTreatment||'—'):'—'}</div></div>
+    <div class="stat"><div class="lb">Commission</div><div class="vl" style="font-size:15px">${ret.commissionTreatment==='Reverse'?'Reversed':'Kept'}</div>${adj?`<div class="sm neg">${egp0(adj.amount)}</div>`:''}</div>
+    <div class="stat"><div class="lb">Return Date</div><div class="vl" style="font-size:15px">${fmtDate(ret.date)}</div></div>
+  </div>
+  <div class="card row-gap"><div class="card-h"><h3>Returned Lines</h3><span class="sub">Historical snapshot of the original sale terms</span></div>
+    <div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>SKU / Product</th><th>Disc. Type</th><th class="num">Applied %</th><th class="num">Return Qty</th><th class="num">Unit</th><th class="num">Gross</th><th class="num">Discount</th><th class="num">Net</th></tr></thead>
+    <tbody>${lines.map(l=>`<tr><td><b>${l.sku}</b><br><small class="muted">${esc((productById(l.productId)||{}).name||'')} · ${l.color}/${l.size}</small></td>
+      <td>${dtypeBadge(l.discountType||'Basic')}</td><td class="num">${l.appliedDiscountPercent||0}%</td><td class="num">${l.returnQty}</td>
+      <td class="num">${egp0(l.unitPrice)}</td><td class="num">${egp0(l.grossReturn)}</td><td class="num neg">${l.discountAmount?'− '+egp0(l.discountAmount):'—'}</td><td class="num t-strong">${egp0(l.netReturn)}</td></tr>`).join('')}</tbody>
+    <tfoot><tr style="background:#fafbfc;font-weight:800"><td colspan="5" class="num">Net Return Total</td><td class="num">${egp0(ret.grossReturn)}</td><td class="num neg">− ${egp0(ret.discountReturn)}</td><td class="num">${egp0(ret.netReturn)}</td></tr></tfoot>
+    </table></div></div></div>
+  <div class="grid-2 row-gap">
+    <div class="card"><div class="card-h"><h3>Financial Treatment</h3></div><div class="card-b">
+      ${ret.excessAmount>0?`<div class="calc-row"><span class="lbl">Excess over outstanding</span><span class="val">${egp(ret.excessAmount)}</span></div>
+        <div class="calc-row"><span class="lbl">Treatment</span><span class="val">${esc(ret.financialTreatment||'—')}</span></div>
+        ${ret.financialTreatment==='Refund'?`<div class="calc-row"><span class="lbl">Refund Method</span><span class="val">${esc(ret.refundMethod||'—')}</span></div><div class="calc-row"><span class="lbl">Refund Ref</span><span class="val">${esc(ret.refundRef||'—')}</span></div>`:''}
+        ${ret.financialTreatment==='Credit'?`<div class="calc-row"><span class="lbl">Customer Credit</span><span class="val">${credit?egp(credit.amount):(ds==='Confirmed'?egp(ret.excessAmount):'on confirm')}</span></div>`:''}`:
+        `<div class="section-note" style="margin:0">The full return value reduced the invoice receivable — no excess to settle.</div>`}
+    </div></div>
+    <div class="card"><div class="card-h"><h3>Commission Treatment</h3></div><div class="card-b">
+      <div class="calc-row"><span class="lbl">Choice</span><span class="val">${ret.commissionTreatment==='Reverse'?'Reverse (negative adjustment)':'Keep (no change)'}</span></div>
+      ${adj?`<div class="calc-row"><span class="lbl">Adjustment</span><span class="val neg">${egp0(adj.amount)}</span></div><div class="section-note" style="margin-top:8px;font-size:11.5px">A negative Custom Commission adjustment was posted — original paid commission history is never rewritten.</div>`:(ret.commissionTreatment==='Reverse'?'<div class="muted" style="font-size:12px">No commission had been earned yet on the returned quantity — nothing to reverse.</div>':'<div class="muted" style="font-size:12px">Salesperson keeps commission earned on the returned goods.</div>')}
+    </div></div>
+  </div>
+  ${moves.length?`<div class="card"><div class="card-h"><h3>Inventory Movements from this Return</h3></div>
+    <div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Date</th><th>SKU</th><th>Warehouse</th><th>Type</th><th class="num">In</th><th class="num">Out</th><th class="num">Balance</th><th>User</th></tr></thead>
+    <tbody>${moves.map(m=>{const v=variantById(m.variantId);return `<tr><td>${fmtDate(m.date)}</td><td>${v?v.sku:'—'}</td><td>${esc(whName(m.warehouseId))}</td><td>${movementBadgeV3(m.type)}</td><td class="num pos">${m.qtyIn||''}</td><td class="num neg">${m.qtyOut||''}</td><td class="num">${m.balanceAfter}</td><td class="muted">${esc(m.user||'')}</td></tr>`;}).join('')}</tbody>
+    </table></div></div></div>`:''}
+  ${ret.notes?`<div class="section-note">Notes: ${esc(ret.notes)}</div>`:''}`;
+};
 
 /*=================================== COMMISSIONS ===================================*/
 const commState={rep:'',cust:'',invoice:'',receipt:'',disc:'',status:'',dayRange:'',dateFrom:'',dateTo:'',page:1};
@@ -3347,8 +4171,14 @@ function serializeState(){
     inventoryMovements:DB.inventoryMovements.map(m=>({...m,date:(m.date&&m.date.toISOString)?m.date.toISOString():m.date})),
     invoiceLines:DB.invoiceLines,
     customCommissions:DB.customCommissions,
+    warehouses:DB.warehouses,warehouseStock:DB.warehouseStock,
+    stockBatches:DB.stockBatches.map(b=>({...b,date:(b.date&&b.date.toISOString)?b.date.toISOString():b.date})),
+    stockTransfers:DB.stockTransfers.map(t=>({...t,date:(t.date&&t.date.toISOString)?t.date.toISOString():t.date})),
+    returnInvoices:DB.returnInvoices.map(r=>({...r,date:(r.date&&r.date.toISOString)?r.date.toISOString():r.date})),
+    returnLines:DB.returnLines,customerCredits:DB.customerCredits,returnReasons:DB.returnReasons,
     seq:{seqInvoice:DB.seqInvoice,seqReceipt:DB.seqReceipt,seqCollection:DB.seqCollection,seqInvId:DB.seqInvId,
-      seqProduct:DB.seqProduct,seqVariant:DB.seqVariant,seqMovement:DB.seqMovement,seqLine:DB.seqLine,seqCustom:DB.seqCustom},
+      seqProduct:DB.seqProduct,seqVariant:DB.seqVariant,seqMovement:DB.seqMovement,seqLine:DB.seqLine,seqCustom:DB.seqCustom,
+      seqWarehouse:DB.seqWarehouse,seqBatch:DB.seqBatch,seqTransfer:DB.seqTransfer,seqReturn:DB.seqReturn,seqReturnLine:DB.seqReturnLine,seqCredit:DB.seqCredit,seqWhStock:DB.seqWhStock},
     savedAt:dateToInput(TODAY)};
 }
 function loadState(o){
@@ -3365,12 +4195,28 @@ function loadState(o){
   DB.inventoryMovements=(o.inventoryMovements||[]).map(m=>({...m,date:m.date?new Date(m.date):TODAY}));
   DB.invoiceLines=o.invoiceLines||[];
   DB.customCommissions=o.customCommissions||[];
+  DB.warehouses=o.warehouses||[];
+  DB.warehouseStock=o.warehouseStock||[];
+  DB.stockBatches=(o.stockBatches||[]).map(b=>({...b,date:b.date?new Date(b.date):TODAY}));
+  DB.stockTransfers=(o.stockTransfers||[]).map(t=>({...t,date:t.date?new Date(t.date):TODAY}));
+  DB.returnInvoices=(o.returnInvoices||[]).map(r=>({...r,date:r.date?new Date(r.date):TODAY}));
+  DB.returnLines=o.returnLines||[];
+  DB.customerCredits=o.customerCredits||[];
+  if(o.returnReasons&&o.returnReasons.length)DB.returnReasons=o.returnReasons;
   if(o.seq){DB.seqInvoice=o.seq.seqInvoice;DB.seqReceipt=o.seq.seqReceipt;DB.seqCollection=o.seq.seqCollection;DB.seqInvId=o.seq.seqInvId;
     DB.seqProduct=o.seq.seqProduct||DB.products.reduce((m,p)=>Math.max(m,p.id),0);
     DB.seqVariant=o.seq.seqVariant||DB.productVariants.reduce((m,v)=>Math.max(m,v.id),0);
     DB.seqMovement=o.seq.seqMovement||DB.inventoryMovements.reduce((m,x)=>Math.max(m,x.id),0);
     DB.seqLine=o.seq.seqLine||DB.invoiceLines.reduce((m,x)=>Math.max(m,x.id),0);
-    DB.seqCustom=o.seq.seqCustom||DB.customCommissions.reduce((m,x)=>Math.max(m,x.id),0);}
+    DB.seqCustom=o.seq.seqCustom||DB.customCommissions.reduce((m,x)=>Math.max(m,x.id),0);
+    DB.seqWarehouse=o.seq.seqWarehouse||DB.warehouses.reduce((m,x)=>Math.max(m,x.id),0);
+    DB.seqBatch=o.seq.seqBatch||DB.stockBatches.reduce((m,x)=>Math.max(m,x.id),0);
+    DB.seqTransfer=o.seq.seqTransfer||DB.stockTransfers.reduce((m,x)=>Math.max(m,x.id),0);
+    DB.seqReturn=o.seq.seqReturn||DB.returnInvoices.reduce((m,x)=>Math.max(m,x.id),0);
+    DB.seqReturnLine=o.seq.seqReturnLine||DB.returnLines.reduce((m,x)=>Math.max(m,x.id),0);
+    DB.seqCredit=o.seq.seqCredit||DB.customerCredits.reduce((m,x)=>Math.max(m,x.id),0);
+    DB.seqWhStock=o.seq.seqWhStock||DB.warehouseStock.reduce((m,x)=>Math.max(m,x.id),0);}
+  ensureWarehouses();
 }
 let PERSIST_OK=true;
 function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify(serializeState()));}catch(e){PERSIST_OK=false;}
@@ -3402,8 +4248,10 @@ function resetData(){
     DB.salespersons=[];DB.customers=[];DB.invoices=[];DB.collections=[];DB.allocations=[];DB.commissionTxns=[];
     DB.commissionRules=[];DB.bonusRules=[];DB.roles=[];DB.users=[];DB.commissionStatusOverride={};
     DB.products=[];DB.productVariants=[];DB.inventoryMovements=[];DB.invoiceLines=[];DB.customCommissions=[];
+    DB.warehouses=[];DB.warehouseStock=[];DB.stockBatches=[];DB.stockTransfers=[];DB.returnInvoices=[];DB.returnLines=[];DB.customerCredits=[];
     DB.seqInvoice=1000;DB.seqReceipt=1000;DB.seqCollection=0;DB.seqInvId=0;
-    DB.seqProduct=0;DB.seqVariant=0;DB.seqMovement=0;DB.seqLine=0;DB.seqCustom=0;RND=mulberry32(20260809);
+    DB.seqProduct=0;DB.seqVariant=0;DB.seqMovement=0;DB.seqLine=0;DB.seqCustom=0;
+    DB.seqWarehouse=0;DB.seqBatch=0;DB.seqTransfer=0;DB.seqReturn=0;DB.seqReturnLine=0;DB.seqCredit=0;DB.seqWhStock=0;RND=mulberry32(20260809);
     seed();rebuild();renderNav();closeDrawer();go('dashboard');toast('Reset complete','Original demo data restored','ok');
   },true);
 }
@@ -3453,9 +4301,16 @@ function signatureOfArrays(a){
     H(a.bonusRules,['id','collectionDays','bonusPercent','active']),
     H(a.products,['id','code','name','category','brand','description','defaultPrice','active','notes','discountType','discountReviewed']),
     H(a.productVariants,['id','productId','sku','color','size','price','stock','reorderLevel','active']),
-    H(a.inventoryMovements,['id','date','productId','variantId','type','qtyIn','qtyOut','balanceAfter','reference','invoiceId','user','notes']),
+    H(a.inventoryMovements,['id','date','productId','variantId','warehouseId','type','qtyIn','qtyOut','balanceAfter','reference','invoiceId','batchNo','returnId','transferId','user','notes']),
     H(a.invoiceLines,['id','invoiceId','productId','variantId','sku','color','size','qty','unitPrice','discountType','appliedDiscountPercent','grossLineAmount','discountAmount','netLineTotal','commissionType','lineDiscount','lineTotal']),
-    H(a.customCommissions,['id','salespersonId','customerId','invoiceId','invoiceLineId','date','type','baseAmount','percentage','amount','description','notes','status'])
+    H(a.customCommissions,['id','salespersonId','customerId','invoiceId','invoiceLineId','returnId','kind','date','type','baseAmount','percentage','amount','description','notes','status']),
+    H(a.warehouses,['id','code','name','type','location','active','notes']),
+    H(a.warehouseStock,['id','warehouseId','variantId','qty']),
+    H(a.stockBatches,['id','batchNo','warehouseId','date','reference','notes','lineCount','totalQty']),
+    H(a.stockTransfers,['id','transferNo','fromWh','toWh','date','notes','status','totalQty']),
+    H(a.returnInvoices,['id','returnNo','originalInvoiceId','customerId','salespersonId','warehouseId','date','reason','notes','docStatus','grossReturn','netReturn','arReduction','excessAmount','financialTreatment','commissionTreatment','stockPosted']),
+    H(a.returnLines,['id','returnId','originalLineId','variantId','returnQty','unitPrice','appliedDiscountPercent','grossReturn','discountAmount','netReturn','commissionType']),
+    H(a.customerCredits,['id','customerId','returnId','date','amount','appliedAmount'])
   ].join(';');
 }
 function signatureOfDB(){return signatureOfArrays(DB);}
@@ -3470,7 +4325,7 @@ function isUserBusy(){
 function silentRerender(){
   const y=window.scrollY||window.pageYOffset||0;
   renderNav();
-  try{ if(PAGES[ROUTE.page])PAGES[ROUTE.page](ROUTE.params); }catch(e){ console.error(e); }
+  try{ if(PAGES[ROUTE.page])PAGES[ROUTE.page](ROUTE.params); applyI18n(); }catch(e){ console.error(e); }
   window.scrollTo(0,y);
 }
 // Sync-triggered refreshes are silent (no spinner flash); direct navigation still uses renderView().
@@ -3606,19 +4461,34 @@ const TMAP={
     from:r=>({id:r.id,code:r.code,name:r.name,category:r.category,brand:r.brand||'',description:r.description||'',defaultPrice:+r.default_price||0,active:r.active!==false,notes:r.notes||'',discountType:r.discount_type||'Basic',discountReviewed:!!r.discount_reviewed,createdBy:r.created_by||'',createdAt:r.created_at||'',updatedBy:r.updated_by||'',updatedAt:r.updated_at||''})},
   product_variants:{to:v=>({id:v.id,product_id:v.productId,sku:v.sku,color:v.color,size:v.size,price:v.price,stock:v.stock,reorder_level:v.reorderLevel,active:v.active}),
     from:r=>({id:r.id,productId:r.product_id,sku:r.sku,color:r.color,size:r.size,price:+r.price||0,stock:+r.stock||0,reorderLevel:+r.reorder_level||0,active:r.active!==false})},
-  inventory_movements:{to:m=>({id:m.id,date:dateToInput(m.date),product_id:m.productId,variant_id:m.variantId,type:m.type,qty_in:m.qtyIn,qty_out:m.qtyOut,balance_after:m.balanceAfter,reference:m.reference||'',invoice_id:m.invoiceId||null,user_name:m.user||'',notes:m.notes||''}),
-    from:r=>({id:r.id,date:parseDateInput(r.date),productId:r.product_id,variantId:r.variant_id,type:r.type,qtyIn:+r.qty_in||0,qtyOut:+r.qty_out||0,balanceAfter:+r.balance_after||0,reference:r.reference||'',invoiceId:r.invoice_id||null,user:r.user_name||'',notes:r.notes||'',createdAt:''})},
+  inventory_movements:{to:m=>({id:m.id,date:dateToInput(m.date),product_id:m.productId,variant_id:m.variantId,warehouse_id:m.warehouseId||null,type:m.type,qty_in:m.qtyIn,qty_out:m.qtyOut,balance_after:m.balanceAfter,reference:m.reference||'',invoice_id:m.invoiceId||null,batch_no:m.batchNo||'',return_id:m.returnId||null,transfer_id:m.transferId||null,user_name:m.user||'',notes:m.notes||''}),
+    from:r=>({id:r.id,date:parseDateInput(r.date),productId:r.product_id,variantId:r.variant_id,warehouseId:r.warehouse_id||null,type:r.type,qtyIn:+r.qty_in||0,qtyOut:+r.qty_out||0,balanceAfter:+r.balance_after||0,reference:r.reference||'',invoiceId:r.invoice_id||null,batchNo:r.batch_no||'',returnId:r.return_id||null,transferId:r.transfer_id||null,user:r.user_name||'',notes:r.notes||'',createdAt:''})},
   invoice_lines:{to:l=>({id:l.id,invoice_id:l.invoiceId,product_id:l.productId,variant_id:l.variantId,sku:l.sku,color:l.color,size:l.size,qty:l.qty,unit_price:l.unitPrice,
       discount_type:l.discountType||'Basic',applied_discount_percent:l.appliedDiscountPercent!=null?l.appliedDiscountPercent:null,gross_line_amount:l.grossLineAmount!=null?l.grossLineAmount:(l.qty*l.unitPrice),discount_amount:l.discountAmount!=null?l.discountAmount:(l.lineDiscount||0),net_line_total:l.netLineTotal!=null?l.netLineTotal:l.lineTotal,commission_type:l.commissionType||commissionTypeFor(l.discountType||'Basic'),
       line_discount:l.lineDiscount||0,line_total:l.lineTotal}),
     from:r=>({id:r.id,invoiceId:r.invoice_id,productId:r.product_id,variantId:r.variant_id,sku:r.sku,color:r.color,size:r.size,qty:+r.qty||0,unitPrice:+r.unit_price||0,
       discountType:r.discount_type||'Basic',appliedDiscountPercent:r.applied_discount_percent!=null?+r.applied_discount_percent:null,grossLineAmount:r.gross_line_amount!=null?+r.gross_line_amount:((+r.qty||0)*(+r.unit_price||0)),discountAmount:r.discount_amount!=null?+r.discount_amount:(+r.line_discount||0),netLineTotal:r.net_line_total!=null?+r.net_line_total:(+r.line_total||0),commissionType:r.commission_type||commissionTypeFor(r.discount_type||'Basic'),
       lineDiscount:+r.line_discount||0,lineTotal:+r.line_total||0})},
-  custom_commissions:{to:x=>({id:x.id,salesperson_id:x.salespersonId,customer_id:x.customerId||null,invoice_id:x.invoiceId||null,invoice_line_id:x.invoiceLineId||null,date:x.date||null,type:x.type,base_amount:x.baseAmount||null,percentage:x.percentage||null,amount:x.amount,description:x.description||'',notes:x.notes||'',status:x.status||'Pending',created_by:x.createdBy||'',created_at:x.createdAt||null,updated_by:x.updatedBy||'',updated_at:x.updatedAt||null}),
-    from:r=>({id:r.id,salespersonId:r.salesperson_id,customerId:r.customer_id||null,invoiceId:r.invoice_id||null,invoiceLineId:r.invoice_line_id||null,date:r.date||'',type:r.type,baseAmount:r.base_amount,percentage:r.percentage,amount:+r.amount||0,description:r.description||'',notes:r.notes||'',status:r.status||'Pending',createdBy:r.created_by||'',createdAt:r.created_at||'',updatedBy:r.updated_by||'',updatedAt:r.updated_at||''})}
+  custom_commissions:{to:x=>({id:x.id,salesperson_id:x.salespersonId,customer_id:x.customerId||null,invoice_id:x.invoiceId||null,invoice_line_id:x.invoiceLineId||null,return_id:x.returnId||null,kind:x.kind||'Manual',date:x.date||null,type:x.type,base_amount:x.baseAmount||null,percentage:x.percentage||null,amount:x.amount,description:x.description||'',notes:x.notes||'',status:x.status||'Pending',created_by:x.createdBy||'',created_at:x.createdAt||null,updated_by:x.updatedBy||'',updated_at:x.updatedAt||null}),
+    from:r=>({id:r.id,salespersonId:r.salesperson_id,customerId:r.customer_id||null,invoiceId:r.invoice_id||null,invoiceLineId:r.invoice_line_id||null,returnId:r.return_id||null,kind:r.kind||'Manual',date:r.date||'',type:r.type,baseAmount:r.base_amount,percentage:r.percentage,amount:+r.amount||0,description:r.description||'',notes:r.notes||'',status:r.status||'Pending',createdBy:r.created_by||'',createdAt:r.created_at||'',updatedBy:r.updated_by||'',updatedAt:r.updated_at||''})},
+  warehouses:{to:w=>({id:w.id,code:w.code,name:w.name,type:w.type||'Branch',location:w.location||'',active:w.active!==false,notes:w.notes||'',created_by:w.createdBy||'',created_at:w.createdAt||null}),
+    from:r=>({id:r.id,code:r.code,name:r.name,type:r.type||'Branch',location:r.location||'',active:r.active!==false,notes:r.notes||'',createdBy:r.created_by||'',createdAt:r.created_at||''})},
+  warehouse_stock:{to:s=>({id:s.id,warehouse_id:s.warehouseId,variant_id:s.variantId,qty:s.qty}),
+    from:r=>({id:r.id,warehouseId:r.warehouse_id,variantId:r.variant_id,qty:+r.qty||0})},
+  stock_batches:{to:b=>({id:b.id,batch_no:b.batchNo,warehouse_id:b.warehouseId,date:dateToInput(b.date),reference:b.reference||'',notes:b.notes||'',line_count:b.lineCount||0,total_qty:b.totalQty||0,created_by:b.createdBy||'',created_at:b.createdAt||null}),
+    from:r=>({id:r.id,batchNo:r.batch_no,warehouseId:r.warehouse_id,date:parseDateInput(r.date),reference:r.reference||'',notes:r.notes||'',lineCount:+r.line_count||0,totalQty:+r.total_qty||0,createdBy:r.created_by||'',createdAt:r.created_at||''})},
+  stock_transfers:{to:t=>({id:t.id,transfer_no:t.transferNo,from_wh:t.fromWh,to_wh:t.toWh,date:dateToInput(t.date),notes:t.notes||'',status:t.status||'Confirmed',total_qty:t.totalQty||0,created_by:t.createdBy||'',created_at:t.createdAt||null}),
+    from:r=>({id:r.id,transferNo:r.transfer_no,fromWh:r.from_wh,toWh:r.to_wh,date:parseDateInput(r.date),notes:r.notes||'',status:r.status||'Confirmed',totalQty:+r.total_qty||0,createdBy:r.created_by||'',createdAt:r.created_at||''})},
+  return_invoices:{to:r=>({id:r.id,return_no:r.returnNo,original_invoice_id:r.originalInvoiceId,customer_id:r.customerId,salesperson_id:r.salespersonId,warehouse_id:r.warehouseId,date:dateToInput(r.date),reason:r.reason||'',notes:r.notes||'',doc_status:r.docStatus||'Draft',gross_return:r.grossReturn||0,discount_return:r.discountReturn||0,net_return:r.netReturn||0,ar_reduction:r.arReduction||0,excess_amount:r.excessAmount||0,financial_treatment:r.financialTreatment||'',refund_method:r.refundMethod||'',refund_date:r.refundDate||'',refund_ref:r.refundRef||'',commission_treatment:r.commissionTreatment||'',stock_posted:!!r.stockPosted,created_by:r.createdBy||'',created_at:r.createdAt||null,confirmed_by:r.confirmedBy||'',confirmed_at:r.confirmedAt||'',cancelled_by:r.cancelledBy||'',cancelled_at:r.cancelledAt||''}),
+    from:r=>({id:r.id,returnNo:r.return_no,originalInvoiceId:r.original_invoice_id,customerId:r.customer_id,salespersonId:r.salesperson_id,warehouseId:r.warehouse_id,date:parseDateInput(r.date),reason:r.reason||'',notes:r.notes||'',docStatus:r.doc_status||'Draft',grossReturn:+r.gross_return||0,discountReturn:+r.discount_return||0,netReturn:+r.net_return||0,arReduction:+r.ar_reduction||0,excessAmount:+r.excess_amount||0,financialTreatment:r.financial_treatment||'',refundMethod:r.refund_method||'',refundDate:r.refund_date||'',refundRef:r.refund_ref||'',commissionTreatment:r.commission_treatment||'',stockPosted:!!r.stock_posted,createdBy:r.created_by||'',createdAt:r.created_at||'',confirmedBy:r.confirmed_by||'',confirmedAt:r.confirmed_at||'',cancelledBy:r.cancelled_by||'',cancelledAt:r.cancelled_at||''})},
+  return_lines:{to:l=>({id:l.id,return_id:l.returnId,original_line_id:l.originalLineId,product_id:l.productId,variant_id:l.variantId,sku:l.sku,color:l.color,size:l.size,return_qty:l.returnQty,unit_price:l.unitPrice,discount_type:l.discountType||'Basic',applied_discount_percent:l.appliedDiscountPercent||0,gross_return:l.grossReturn||0,discount_amount:l.discountAmount||0,net_return:l.netReturn||0,commission_type:l.commissionType||'Basic'}),
+    from:r=>({id:r.id,returnId:r.return_id,originalLineId:r.original_line_id,productId:r.product_id,variantId:r.variant_id,sku:r.sku,color:r.color,size:r.size,returnQty:+r.return_qty||0,unitPrice:+r.unit_price||0,discountType:r.discount_type||'Basic',appliedDiscountPercent:+r.applied_discount_percent||0,grossReturn:+r.gross_return||0,discountAmount:+r.discount_amount||0,netReturn:+r.net_return||0,commissionType:r.commission_type||'Basic'})},
+  customer_credits:{to:c=>({id:c.id,customer_id:c.customerId,return_id:c.returnId||null,date:dateToInput(c.date),amount:c.amount,applied_amount:c.appliedAmount||0,notes:c.notes||'',created_by:c.createdBy||''}),
+    from:r=>({id:r.id,customerId:r.customer_id,returnId:r.return_id||null,date:parseDateInput(r.date),amount:+r.amount||0,appliedAmount:+r.applied_amount||0,notes:r.notes||'',createdBy:r.created_by||''})}
 };
 const KIND2TBL={customer:'customers',invoice:'invoices',salesperson:'salespersons',collection:'collections',
-  product:'products',variant:'product_variants',movement:'inventory_movements',line:'invoice_lines',custom:'custom_commissions'};
+  product:'products',variant:'product_variants',movement:'inventory_movements',line:'invoice_lines',custom:'custom_commissions',
+  warehouse:'warehouses',whstock:'warehouse_stock',batch:'stock_batches',transfer:'stock_transfers',return:'return_invoices',returnline:'return_lines',credit:'customer_credits'};
 async function sbGet(table){const c=getCloud();const r=await fetch(`${c.url}/rest/v1/${table}?select=*`,{headers:dataHeaders()});
   if(!r.ok)throw new Error(table+': HTTP '+r.status);return r.json();}
 async function sbUpsert(table,rows){const c=getCloud();const body=Array.isArray(rows)?rows:[rows];
@@ -3642,10 +4512,14 @@ async function secureLoad(){
     try{const pr=await fetch(`${c.url}/rest/v1/profiles?id=eq.${SESSION.uid}&select=role,salesperson_id,full_name,email`,{headers:dataHeaders()});
       const pj=await pr.json();if(pj&&pj[0]){currentUserRole=pj[0].role||'Viewer';currentUserName=pj[0].full_name||pj[0].email||SESSION.email;
         SCOPE=(currentUserRole==='Sales Representative'&&pj[0].salesperson_id)?pj[0].salesperson_id:null;updateUserChip();}}catch(e){}
+    // Best-effort language preference (separate request so a missing 'language' column never breaks role loading).
+    try{const lr=await fetch(`${c.url}/rest/v1/profiles?id=eq.${SESSION.uid}&select=language`,{headers:dataHeaders()});
+      if(lr.ok){const lj=await lr.json();const lang=lj&&lj[0]&&lj[0].language;if(lang&&lang!==APP_LANG){APP_LANG=(lang==='ar')?'ar':'en';try{localStorage.setItem(I18N_KEY,APP_LANG);}catch(e){}const lb=document.getElementById('langBtn');if(lb)lb.textContent=(APP_LANG==='ar')?'ع':'EN';}}}catch(e){}
   }
-  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc]=await Promise.all([
+  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd]=await Promise.all([
     sbGet('salespersons'),sbGet('customers'),sbGet('invoices'),sbGet('collections'),sbGet('commission_rules'),sbGet('bonus_rules'),
-    sbGet('products').catch(()=>[]),sbGet('product_variants').catch(()=>[]),sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[])]);
+    sbGet('products').catch(()=>[]),sbGet('product_variants').catch(()=>[]),sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
+    sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[])]);
   DB.salespersons=sp.map(TMAP.salespersons.from);
   DB.customers=cu.map(TMAP.customers.from);
   DB.invoices=iv.map(TMAP.invoices.from);
@@ -3657,8 +4531,16 @@ async function secureLoad(){
   DB.inventoryMovements=im.map(TMAP.inventory_movements.from);
   DB.invoiceLines=il.map(TMAP.invoice_lines.from);
   DB.customCommissions=cc.map(TMAP.custom_commissions.from);
+  DB.warehouses=wh.map(TMAP.warehouses.from);
+  DB.warehouseStock=ws.map(TMAP.warehouse_stock.from);
+  DB.stockBatches=sb.map(TMAP.stock_batches.from);
+  DB.stockTransfers=st.map(TMAP.stock_transfers.from);
+  DB.returnInvoices=ri.map(TMAP.return_invoices.from);
+  DB.returnLines=rl.map(TMAP.return_lines.from);
+  DB.customerCredits=cd.map(TMAP.customer_credits.from);
   try{const sr=await fetch(`${c.url}/rest/v1/app_settings?id=eq.main&select=data`,{headers:dataHeaders()});const sj=await sr.json();
-    if(sj&&sj[0]&&sj[0].data){const d=sj[0].data;if(d.creditSettings)DB.creditSettings=d.creditSettings;if(d.bonusInterpolate!=null)DB.bonusInterpolate=d.bonusInterpolate;if(d.roles)DB.roles=d.roles;}}catch(e){}
+    if(sj&&sj[0]&&sj[0].data){const d=sj[0].data;if(d.creditSettings)DB.creditSettings=d.creditSettings;if(d.bonusInterpolate!=null)DB.bonusInterpolate=d.bonusInterpolate;if(d.roles)DB.roles=d.roles;if(d.returnReasons&&d.returnReasons.length)DB.returnReasons=d.returnReasons;}}catch(e){}
+  ensureWarehouses();
   applySeqCounters();
   suppressPush=true;rebuild();suppressPush=false;
   lastDataSig=signatureOfDB();
@@ -3674,6 +4556,13 @@ function applySeqCounters(){
   DB.seqMovement=Math.max(0,...DB.inventoryMovements.map(m=>m.id));
   DB.seqLine=Math.max(0,...DB.invoiceLines.map(l=>l.id));
   DB.seqCustom=Math.max(0,...DB.customCommissions.map(x=>x.id));
+  DB.seqWarehouse=Math.max(0,...DB.warehouses.map(x=>x.id));
+  DB.seqWhStock=Math.max(0,...DB.warehouseStock.map(x=>x.id));
+  DB.seqBatch=Math.max(0,...DB.stockBatches.map(x=>x.id));
+  DB.seqTransfer=Math.max(0,...DB.stockTransfers.map(x=>x.id));
+  DB.seqReturn=Math.max(0,...DB.returnInvoices.map(x=>x.id));
+  DB.seqReturnLine=Math.max(0,...DB.returnLines.map(x=>x.id));
+  DB.seqCredit=Math.max(0,...DB.customerCredits.map(x=>x.id));
 }
 // Background poll worker: fetch silently, compare, and refresh ONLY when data actually changed.
 async function secureSyncTick(){
@@ -3683,16 +4572,20 @@ async function secureSyncTick(){
   try{
     rows=await Promise.all([
       sbGet('salespersons'),sbGet('customers'),sbGet('invoices'),sbGet('collections'),sbGet('commission_rules'),sbGet('bonus_rules'),
-      sbGet('products').catch(()=>[]),sbGet('product_variants').catch(()=>[]),sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[])]);
+      sbGet('products').catch(()=>[]),sbGet('product_variants').catch(()=>[]),sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
+      sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[])]);
   }catch(e){ setCloudStatus('error',e.message); return; }
-  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc]=rows;
+  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd]=rows;
   const inc={salespersons:sp.map(TMAP.salespersons.from),customers:cu.map(TMAP.customers.from),invoices:iv.map(TMAP.invoices.from),
     collections:co.map(TMAP.collections.from),
     commissionRules:cr.length?cr.map(TMAP.commission_rules.from):DB.commissionRules,
     bonusRules:br.length?br.map(TMAP.bonus_rules.from):DB.bonusRules,
     products:pr.map(TMAP.products.from),productVariants:pv.map(TMAP.product_variants.from),
     inventoryMovements:im.map(TMAP.inventory_movements.from),invoiceLines:il.map(TMAP.invoice_lines.from),
-    customCommissions:cc.map(TMAP.custom_commissions.from)};
+    customCommissions:cc.map(TMAP.custom_commissions.from),
+    warehouses:wh.map(TMAP.warehouses.from),warehouseStock:ws.map(TMAP.warehouse_stock.from),
+    stockBatches:sb.map(TMAP.stock_batches.from),stockTransfers:st.map(TMAP.stock_transfers.from),
+    returnInvoices:ri.map(TMAP.return_invoices.from),returnLines:rl.map(TMAP.return_lines.from),customerCredits:cd.map(TMAP.customer_credits.from)};
   setCloudStatus('live');                 // healthy poll — indicator stays "Live sync", no flashing
   if(signatureOfArrays(inc)===lastDataSig)return;   // nothing changed → render NOTHING
   if(isUserBusy())return;                 // user started interacting during the fetch → wait for next tick
@@ -3701,6 +4594,9 @@ async function secureSyncTick(){
   if(cr.length)DB.commissionRules=inc.commissionRules; if(br.length)DB.bonusRules=inc.bonusRules;
   DB.products=inc.products;DB.productVariants=inc.productVariants;DB.inventoryMovements=inc.inventoryMovements;
   DB.invoiceLines=inc.invoiceLines;DB.customCommissions=inc.customCommissions;
+  DB.warehouses=inc.warehouses;DB.warehouseStock=inc.warehouseStock;DB.stockBatches=inc.stockBatches;
+  DB.stockTransfers=inc.stockTransfers;DB.returnInvoices=inc.returnInvoices;DB.returnLines=inc.returnLines;DB.customerCredits=inc.customerCredits;
+  ensureWarehouses();
   applySeqCounters();
   suppressPush=true;rebuild();suppressPush=false;   // rebuild()→persist() refreshes lastDataSig
   silentRerender();
@@ -3740,16 +4636,21 @@ function resolveRole(){
   updateUserChip();
 }
 // Granular permission matrix. Reps never get inventory-adjust or custom-commission.
+const WH_PERMS_ALL={viewWarehouses:true,editWarehouses:true,bulkStockIn:true,stockTransfer:true,viewReturns:true,createReturn:true,confirmReturn:true,cancelReturn:true,returnFinancial:true,returnCommission:true,exportMovements:true};
+const WH_PERMS_NONE={viewWarehouses:false,editWarehouses:false,bulkStockIn:false,stockTransfer:false,viewReturns:false,createReturn:false,confirmReturn:false,cancelReturn:false,returnFinancial:false,returnCommission:false,exportMovements:false};
 const FULL_PERMS={edit:true,rules:true,seeAll:true,viewInventory:true,editProducts:true,adjustStock:true,stockIn:true,
-  createInvoice:true,editInvoice:true,confirmInvoice:true,cancelInvoice:true,customCommission:true};
+  createInvoice:true,editInvoice:true,confirmInvoice:true,cancelInvoice:true,customCommission:true,...WH_PERMS_ALL};
 function perms(){
   if(authRequired()&&SESSION){const r=currentUserRole;
     if(r==='Administrator')return {...FULL_PERMS};
     if(r==='Finance Manager')return {...FULL_PERMS};
-    if(r==='Accountant')return {edit:true,rules:false,seeAll:true,viewInventory:true,editProducts:true,adjustStock:true,stockIn:true,createInvoice:true,editInvoice:true,confirmInvoice:true,cancelInvoice:true,customCommission:false};
-    if(r==='Sales Manager')return {edit:false,rules:false,seeAll:true,viewInventory:true,editProducts:false,adjustStock:false,stockIn:false,createInvoice:false,editInvoice:false,confirmInvoice:false,cancelInvoice:false,customCommission:false};
-    if(r==='Sales Representative')return {edit:false,rules:false,seeAll:false,viewInventory:false,editProducts:false,adjustStock:false,stockIn:false,createInvoice:false,editInvoice:false,confirmInvoice:false,cancelInvoice:false,customCommission:false};
-    return {edit:false,rules:false,seeAll:true,viewInventory:true,editProducts:false,adjustStock:false,stockIn:false,createInvoice:false,editInvoice:false,confirmInvoice:false,cancelInvoice:false,customCommission:false}; // Viewer
+    if(r==='Accountant')return {edit:true,rules:false,seeAll:true,viewInventory:true,editProducts:true,adjustStock:true,stockIn:true,createInvoice:true,editInvoice:true,confirmInvoice:true,cancelInvoice:true,customCommission:false,
+      ...WH_PERMS_ALL,editWarehouses:false};
+    if(r==='Sales Manager')return {edit:false,rules:false,seeAll:true,viewInventory:true,editProducts:false,adjustStock:false,stockIn:false,createInvoice:false,editInvoice:false,confirmInvoice:false,cancelInvoice:false,customCommission:false,
+      ...WH_PERMS_NONE,viewWarehouses:true,viewReturns:true,exportMovements:true};
+    if(r==='Sales Representative')return {edit:false,rules:false,seeAll:false,viewInventory:false,editProducts:false,adjustStock:false,stockIn:false,createInvoice:false,editInvoice:false,confirmInvoice:false,cancelInvoice:false,customCommission:false,...WH_PERMS_NONE};
+    return {edit:false,rules:false,seeAll:true,viewInventory:true,editProducts:false,adjustStock:false,stockIn:false,createInvoice:false,editInvoice:false,confirmInvoice:false,cancelInvoice:false,customCommission:false,
+      ...WH_PERMS_NONE,viewWarehouses:true,viewReturns:true,exportMovements:true}; // Viewer
   }
   return {...FULL_PERMS}; // demo / local / no-auth
 }
@@ -3760,7 +4661,9 @@ function requirePerm(k,label){if(can(k))return true;toast('Not permitted','Your 
 function inScope(salespersonId){return !SCOPE||salespersonId===SCOPE;}
 function navAllowed(id){const p=perms();
   if(id==='settings')return p.rules;
-  if(id==='inventory')return p.viewInventory;
+  if(id==='inventory'||id==='movements'||id==='batches')return p.viewInventory;
+  if(id==='warehouses'||id==='transfers')return p.viewWarehouses;
+  if(id==='returns')return p.viewReturns;
   if(!p.seeAll)return ['dashboard','customers','ar','invoices','collections','commissions','reports'].includes(id);
   return true;
 }
@@ -3972,6 +4875,9 @@ gs.addEventListener('input',e=>runSearch(e.target.value));
 gs.addEventListener('focus',e=>{if(e.target.value)runSearch(e.target.value);});
 document.addEventListener('mousedown',e=>{if(!e.target.closest('.searchbar'))document.getElementById('searchResults').classList.remove('open');});
 document.getElementById('dataBtn').onclick=openDataDrawer;
+document.getElementById('langBtn').textContent=(APP_LANG==='ar')?'ع':'EN';
+document.getElementById('langBtn').onclick=toggleLang;
+document.documentElement.dir=(APP_LANG==='ar')?'rtl':'ltr';document.documentElement.lang=APP_LANG;
 document.getElementById('cloudPill').onclick=openCloudDrawer;
 document.getElementById('importFile').onchange=function(e){if(e.target.files[0]){importDataFile(e.target.files[0]);e.target.value='';}};
 document.getElementById('csvFile').onchange=function(e){if(e.target.files[0]){runCsvImport(e.target.files[0]);e.target.value='';}};
@@ -3979,13 +4885,27 @@ document.getElementById('invCsvFile').onchange=function(e){if(e.target.files[0])
 document.getElementById('dateRange').onchange=e=>toast('Reporting period','Set to "'+e.target.options[e.target.selectedIndex].text+'". In the full ERP all figures refilter to this range.','ok');
 document.getElementById('companySel').onchange=e=>{if(e.target.selectedIndex>0){toast('Company','Multi-company support is a placeholder in this prototype','warn');e.target.selectedIndex=0;}};
 document.getElementById('notifBtn').onclick=function(){
-  const overdue=DB.invoices.filter(i=>i.status==='Overdue');
-  const top=overdue.sort((a,b)=>b.balance-a.balance).slice(0,6);
-  openDrawer('Notifications',`<div class="section-note">${overdue.length} overdue invoices need attention.</div>`+
-    top.map(i=>`<div class="alloc-line settle-part" onclick="closeDrawer();go('invoice',{id:${i.id}})" style="cursor:pointer">
-      <div class="inv-b"><b>${i.invoiceNumber}</b><small>${esc(custName(i.customerId))}</small></div>
-      <div class="flow"><span class="badge b-red">Overdue ${daysBetween(i.dueDate,TODAY)}d</span></div>
-      <div class="amt-tag"><b>${egp(i.balance)}</b></div></div>`).join(''));
+  const nd=notifData();
+  const overdue=nd.overdue.slice().sort((a,b)=>b.balance-a.balance).slice(0,6);
+  const low=nd.low.slice(0,8);
+  let html='';
+  if(!overdue.length&&!low.length){html='<div class="empty" style="padding:20px"><div class="e-ic">&#10003;</div><b>All clear</b>No overdue invoices or low-stock reminders.</div>';}
+  if(low.length){
+    html+=`<div class="sr-group">Low-Stock Reminders (${nd.low.length})</div>`+
+      low.map(({v,p,out})=>`<div class="alloc-line settle-part" onclick="closeDrawer();prodState&&(prodState.tab='variants',prodState.stock='low');go('inventory')" style="cursor:pointer">
+        <div class="inv-b"><b>${v.sku}</b><small>${esc(p?p.name:'')} · ${v.color}/${v.size}</small></div>
+        <div class="flow"><span class="badge ${out?'b-red':'b-amber'}">${out?'Out':'Low'} · ${v.stock}/${v.reorderLevel}</span></div>
+        <div class="amt-tag"><b>${out?'reorder':'−'+((+v.reorderLevel||0)-v.stock)}</b></div></div>`).join('')+
+      (nd.low.length>low.length?`<div class="muted" style="font-size:11px;padding:4px 2px">+${nd.low.length-low.length} more at/below reorder level</div>`:'');
+  }
+  if(overdue.length){
+    html+=`<div class="sr-group" style="margin-top:12px">Overdue Receivables (${nd.overdue.length})</div>`+
+      overdue.map(i=>`<div class="alloc-line settle-part" onclick="closeDrawer();go('invoice',{id:${i.id}})" style="cursor:pointer">
+        <div class="inv-b"><b>${i.invoiceNumber}</b><small>${esc(custName(i.customerId))}</small></div>
+        <div class="flow"><span class="badge b-red">Overdue ${daysBetween(i.dueDate,TODAY)}d</span></div>
+        <div class="amt-tag"><b>${egp(i.balance)}</b></div></div>`).join('');
+  }
+  openDrawer('Notifications',html);
 };
 const ROLES_CYCLE=[['Mostafa Adel','Finance Manager','Finance Mgr'],['Sara Fouad','Administrator','Admin'],['Ahmed Hassan','Sales Representative','Sales Rep'],['Nourhan Adel','Sales Manager','Sales Mgr'],['Laila Mansour','Viewer','Viewer']];
 let roleIdx=0;
