@@ -462,7 +462,7 @@ html[dir=rtl] .exp-menu{right:auto;left:0}
 /* TexCredit build: v3.13.1 — Arabic/RTL Correction (was v3.13 Consolidated Search / Filters / Windows (Arabic RTL search fix + Salesperson
    Performance filters + Customer Statement/Collections/Cheques/Invoices month filters). Source: v3.12 Cheque
    Date Cleanup. Additive, non-destructive. */
-const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev19.1) — LOGIN FAIL-CLOSED GATE (client-only; NO migration change). secureLoad() now REPORTS success/failure (returns true on a complete load, false when the Inventory-User required products/variants snapshot fails) — and its wrappers propagate that value (a real bug found in the rev19 file: the expense/F/H/CMI secureLoad wrappers each did `await base()` and discarded the result, so every caller saw undefined and the fail-closed gate could never fire). afterLogin(), connectCloud() (when a SESSION already exists) and the session-resume path now gate on it: for a secure Inventory User whose catalog load failed they do NOT remove the login overlay, do NOT navigate, do NOT show "Signed in", and do NOT expose stale/demo data — they keep a blocking gate ("Signed in, but the catalog could not be loaded" / تم تسجيل الدخول، لكن تعذر تحميل بيانات الأصناف) with a Retry Loading button that re-runs secureLoad; only once it succeeds is the overlay removed, nav rendered, the Inventory home opened and "Signed in" shown. The authenticated session may persist; zero business writes occur on a failed load. Other roles are unaffected. Earlier (rev19) — INVENTORY-USER CATALOG READ FAILS CLOSED (client-only; NO migration change). A transient products/variants read must never collapse the catalog to [] (which showed an empty editable catalog and made the SKU generator collide with Production → 23505 / uq_variant_sku). For the Inventory User ONLY: (1) secureLoad requires products + variants — on failure it fails CLOSED (DB.products / DB.productVariants are left untouched, cloud status → error, a Retry message is shown, no writes) instead of the old .catch(()=>[]). (2) secureSyncTick treats products + variants as one required snapshot — if either fetch fails it KEEPS the previous catalog (never overwrites a good catalog with []), flags error, and skips the tick; the next good tick replaces it. (3) New Product with Sizes performs a strict authoritative catalog refresh BEFORE pgBuildPreview generates SKUs, so nextProductCode()/genSku() are based on the current server catalog (fails closed with "Cannot verify the current catalog. Retry Refresh." on error). (4) a FINAL authoritative read runs before pgCreate submits, re-validating every pending SKU/barcode against the fresh server catalog so a stale/empty catalog can no longer generate colliding SKUs. Every other role is unchanged; uq_variant_sku remains the final server guard. Earlier (rev18) — INVENTORY-USER POST-SAVE CATALOG READ fix (client-only; NO migration change; migration 09 unchanged). The write path was already correct (the Administrator saw every saved variant); the bug was purely in the Inventory-User post-save READ: the role reads variants via the iw_catalog_variants RPC, and PostgREST serializes bigint from a SETOF/TABLE RPC as a STRING, while a table GET (products) returns int8 as a NUMBER — so variant.productId ("123") never strict-equalled product.id (123) and variantsOf(product.id) returned 0 (the Administrator, reading both via table GET, matched number-to-number and saw them). FIX: (1) normalize inventory ids to NUMBERS once at the TMAP cloud boundary (products/product_variants/warehouses/warehouse_stock/inventory_movements/stock_transfers from-mappers do id:+r.id, productId:+r.product_id, variantId:+r.variant_id, warehouseId, from_wh/to_wh — safe and idempotent for numbers), so strict-equality joins hold regardless of which endpoint served the row. (2) iwCatalogReload now REQUIRES the products + variants reads (a failed read THROWS instead of silently keeping stale/empty data and showing 0 variants). (3) after a successful catalog write the client reloads AND verifies the server-created ids actually landed in DB before navigating; if the reload/verify fails it shows "Saved, but the catalog could not refresh — Retry Refresh" (Arabic: تم الحفظ على السيرفر، لكن تعذر تحديث بيانات الأصناف) with a working Retry action, never a product showing 0 variants and never a false success. The successful server identity is authoritative — nothing is recreated. Applied to Add/Edit Product, Add/Edit Variant, Minimum Stock, New Product with Sizes, Bulk Price Edit and Import Finished Goods. uq_variant_sku / duplicate-SKU protection untouched. Earlier (rev17) — OPENING-STOCK DATE micro-fix (client-only; NO migration change). Inventory-User CREATE with opening stock now sends date: dateToInput(TODAY) alongside opening_qty + warehouse_id, so migration 09 stamps the Opening Balance movement with TODAY instead of falling back to a blank date — applied consistently to all three secure create paths (Main Add Variant, New Product with Sizes, Import Finished Goods). Normal Variant UPDATE never sends/changes date. In the Finished-Goods import, the Opening-Movements result count now increments ONLY after the variant RPC succeeds (a failed variant no longer inflates the opening count). Earlier (rev16) — INVENTORY-USER PRACTICAL CATALOG TOOLS, made SERVER-FIRST (client-only; NO migration change; migration 09 unchanged and already live). Builds on the rev15 safety model (zero login writes, no local ghost, server-truth-only) and RE-ENABLES the tools the warehouse employee needs, each converted to go only through the existing migration-09 definer RPCs: (1) New Product with Sizes — the product is created via iw_upsert_product (no client id + a stable request_key reused on retry) and each size/color variant via iw_upsert_variant (server product id, per-row request_key, opening stock via opening_qty + warehouse_id); every RPC is awaited, the authoritative catalog is reloaded, and success is shown only after; a failed child never claims success and never leaves a ghost (the page stays so only the failed rows retry with the same keys). (2) Bulk Price Edit — each changed authoritative variant is updated via iw_upsert_variant with its COMPLETE current payload plus the new price(s) (never nulls a re-written field; cost is sent only when the role may edit it), awaited, then the catalog is reloaded; reports X updated / Y failed with no local price mutation first. (3) Import Finished Goods — new products via iw_upsert_product, new variants via iw_upsert_variant (opening stock via opening_qty/warehouse_id), existing rows updated by authoritative server id; a row with no SKU, or one that cannot be represented by the existing RPCs, is rejected explicitly (no ghost); an opening top-up on an EXISTING variant is skipped and reported (needs a future stock-in RPC). Export (stock/movements) is available to the Inventory User and exposes no Cost column. STILL disabled for this role (no safe server path yet, or out of scope): Stock In / Bulk Stock In (require a future server-side stock-in RPC — never raw writes), Generate Missing Variants, Duplicate Product, Duplicate Variant, the older CSV Inventory Import, and Raw Materials / Manufacturing. Administrator and every other role are unchanged. Earlier (rev15) — INVENTORY-USER PRODUCTION HOTFIX (client-only; NO migration change; migration 09 unchanged and already live). Fixes three real runtime bugs found with a live Inventory-User account: (1) login/sync/page-open now perform ZERO business writes — securePush() is a hard NO-OP for the Inventory User (every legitimate write goes only through the explicit definer RPCs iw_upsert_product / iw_upsert_variant / iw_post_stock_transfer, each awaited with an authoritative reload), ensureWarehouses() is read-only for this role (it no longer synthesizes/pushes warehouse_stock — the source of the whstock RLS-on-login errors), and applyMovement() never attempts a raw stock write for this role. (2) the demo/local catalog can no longer leak to Production — a stale local id (e.g. variant 17) is replaced by the authoritative cloud snapshot on secureLoad and, because securePush is a no-op for the role, is NEVER sent to iw_upsert_variant as a bogus UPDATE (the P0001 "variant not found" error is gone); a failed authoritative read fails closed (no demo fallback, nothing pushed). (3) create is strictly server-first — a Product/Variant CREATE sends NO client id + a stable request_key, awaits the RPC (server allocates the id), reloads authoritative data, and only THEN shows success; a server error keeps the form open with no local ghost, so the creator and the Administrator always see the same authoritative result. Opening Stock on a new Variant flows only through iw_upsert_variant (no local applyMovement); Stock Transfer only through iw_post_stock_transfer. The per-variant Edit action is now available to the Inventory User (previously hidden behind the adjustStock gate), and the Minimum-Stock quick edit persists through the variant RPC with a complete authoritative payload. Bulk / local-first catalog tools that are not yet cloud-safe (New Product with Sizes, Generate Missing Variants, Duplicate Product, Duplicate Variant, Bulk Price Edit, Import Finished Goods, CSV Inventory Import) are disabled for the Inventory User with a "Not available for this role yet" message (buttons hidden + the functions/pages hard-guarded); Administrator and every other role keep all of these unchanged. Earlier (rev14) — MIGRATION-09 IDEMPOTENCY PASS (server-only; migration 09 patched IN PLACE, no client change required): (1) product CREATE idempotency is now bound to the FULL canonical payload via products.request_hash (code+name+category+brand+description+default_price+active+notes+discount_type+discount_reviewed) — same request_key + same payload returns the same id, same key + ANY changed field is an explicit idempotency conflict, never a silent return of the old product. (2) product AND variant CREATE take a request_key advisory xact lock (pg_advisory_xact_lock on iw_product_req:key / iw_variant_req:key) BEFORE the request-key recheck, so two concurrent identical same-key creates both return the SAME server id with exactly one row and no unique_violation (proven: two parallel product creates → one id + one row; two parallel variant creates → one id + one row + exactly one Opening movement). (3) variant CREATE idempotency is bound to the FULL EFFECTIVE payload via product_variants.request_hash (product_id+sku+color+size+price+retail_price+SERVER-effective cost [a forged cost is ignored while Edit is OFF]+barcode+reorder_level+active+opening_qty+warehouse_id+date) — same key with a changed price/opening_qty/warehouse is a conflict, not a silent reuse. (4) opening_qty<0 is now an EXPLICIT error (never silently treated as zero); opening_qty=0 is valid with no warehouse and no movement; opening_qty>0 requires a warehouse and posts exactly one Opening Balance movement. (5) iw_post_stock_transfer request_hash now also binds the normalized date + notes (with from/to + aggregated variant+qty lines), so the same key with a changed date or notes is a conflict; the existing source advisory lock, post-lock request-key recheck, duplicate-line aggregation and no-negative-stock protection are unchanged. Migrations 01–08 untouched; migration 09 NOT executed on Production; Scopes A/B/C, the Arabic Settlement Reason fix, the Cost security boundary and the Stock Transfer architecture all preserved. Earlier (rev13) — MIGRATION-09 INTEGRITY PASS over rev12 (scopes A/B/C + Arabic reason preserved): (1) iw_post_stock_transfer now AGGREGATES duplicate variant lines before validating against locked source stock, so two lines for the same variant can no longer each pass and then overdraw (7+7 on stock 10 → rejected, nothing written; 6+4 → aggregates to 10, one Out+In). (2) iw_upsert_variant never trusts a client stock: CREATE forces stock 0, UPDATE never changes stock — inventory changes only through movements. (3) opening stock has a trusted atomic server path: variant CREATE accepts opening_qty+warehouse_id and posts ONE Opening Balance movement + warehouse balance + company-stock recompute in the same transaction (the client no longer uses raw applyMovement for an Inventory-User opening). (4) variant/product CREATE is server-id-allocated (client id ignored) and request_key idempotent (same key+payload → same id; changed payload → conflict); UPDATE requires an existing server id and never silently creates; the client reads back/uses the server id, so two clients from one snapshot cannot collide and a lost-response retry makes exactly one record. (5) iw_post_stock_transfer re-checks the request_key AFTER taking the source lock and is payload-bound by a request_hash, so a concurrent retry returns the same transfer (no unique violation, no double-post) and a changed payload with the same key is a conflict; the source can never go negative. (6) products are created/updated through iw_upsert_product (server id + durable rep_audit Product Created/Updated); the Inventory User keeps SELECT-only on products (no raw write). All migration-09 functions stay revoked from PUBLIC/anon/authenticated with only the client RPCs granted and each enforcing its own role check. Earlier (rev12): (1) the Settlement reason input now wires oninput so typing a reason — including Arabic (dir=auto) — enables Save immediately, and the Unicode reason flows byte-exact through payload/DB/reload/history/statement/audit; the reverse reason is dir=auto too. (2/3) COST READ is server-enforced: the Inventory User has NO raw product_variants path (removed the raw SELECT/INSERT/UPDATE policies), so a direct product_variants?select=cost returns nothing; it reads the catalog through the field-complete, cost-masking definer RPC iw_catalog_variants() (id/product_id/sku/color/size/price/stock/reorder_level/active/retail_price/cost/barcode) and writes variants through iw_upsert_variant(); the client secureLoad/secureSyncTick/securePush route the Inventory User through these RPCs. (4) inventoryAccess is persisted in app_settings.data and the Inventory User loads ONLY the sanitized cost toggles via iw_access_settings() (refreshed every sync, never stale). (5) EXECUTE hardening: every migration-09 function is revoked from PUBLIC/anon/authenticated then only the four client RPCs are granted; internal helpers are not client-callable; each client RPC enforces its own role check and iw_catalog_variants refuses a non-authorized caller (anon/Sales Rep) so it can never be a cost bypass. (6) STOCK writes are server-enforced: the Inventory User has NO raw warehouse_stock/inventory_movements/stock_transfers write path; it posts through the ATOMIC iw_post_stock_transfer() RPC (role check, request_key idempotency, server ids, From≠To, qty>0, source lock, no-overdraw/no-negative, one header + exact Out/In movements, company total preserved, audit, all-or-nothing); the client postTransfer calls it and reloads authoritative state (local/demo keeps the in-memory engine). Scopes A/B/C preserved unchanged. Earlier (rev11): (A) the additive per-invoice discount is renamed Additional Invoice Discount / خصم إضافي على الفاتورة everywhere current-facing (DB column extra_discount unchanged), and the effective discount is now ACTIVE COMMERCIAL BASE + Additional (Normal customer discount, or the frozen Exceptional Customer / Exceptional Invoice base) — never the inactive Normal base — in the line math, the summary, the save/validation (>100 rejected) and the stored effective that drives commission. (B) Historical Invoice gains a Commercial Policy: an Administrator may book a Normal customer under a one-off Exceptional Invoice (frozen terms, source Exceptional Invoice, ctype snapshot Normal); an Exceptional customer auto-inherits read-only Exceptional Customer terms; the entered amount is booked as-is. (C) New/Current Invoice entry from the Customer Profile (+ New Invoice) and a Quick Entry New Invoice tab, both reusing the REAL standard invoice form (product lines, current stock, Confirm posts stock once, Draft stays Draft). (D) new Inventory / Warehouse User role: focused nav (Catalog/Inventory/Warehouses view-only/Stock Transfers), catalog create/edit with Wholesale+Retail, Product Cost gated by Settings → Inventory / Warehouse Access (View/Edit, default OFF), server-enforced by migration 09 (cost write-guard + sanitized cost-read RPC + default-deny financial privacy). Migrations 01–08 unchanged; 06 byte-unchanged; 07 already on production; 08 safe-delete hotfix. Earlier (rev9): six pre-production blockers fixed IN PLACE (migration 07 + app; migrations 01–06 unchanged). (B1) SERVER FIFO now MATCHES the app rebuild() exactly, including returns: cs_customer_outstanding reconstructs each Confirmed invoice balance as (start=amount) → collections+received/deposited/cleared cheques oldest-first → each Confirmed return applied to its original_invoice_id FIRST then oldest-first spill → Active settlements oldest-first; no more pooling SUM(ar_reduction). Parity proven (INV1 600 / INV2 900 / return 500 vs INV2 / settle 600 → INV1 600 on BOTH app and server). (B2) ONE authoritative policy = DERIVED-AND-RECOMPUTED: cs_reallocate_customer transactionally deletes and re-derives every Active settlement allocation for the customer after each create / backdated-create / reverse using the identical canonical algorithm the app uses, so app and persisted server allocations always reconcile (reversing an earlier settlement re-derives the later one onto the freed invoice, matching the app). A positive settlement can never persist with an empty/invalid allocation set (each >0, <= invoice outstanding, one row per invoice UNIQUE, over-outstanding rejected). (B3) DISTRIBUTED IDENTITY: the browser generates a stable request_key (crypto.randomUUID, reused on retry) and no longer sends max(id)+1; the SERVER allocates the numeric id (rep_next_id); idempotency is payload-bound to request_key + {customer_id, amount, date, reason}; two clients from the same snapshot get different server ids with no false conflict; a lost-response retry with the same key returns the same settlement. Concurrency proven (debt 1000: 700+700 → one; 600+400 → both distinct ids; same key twice → one row). (B4) LIVE MULTI-USER SYNC: secureSyncTick now polls customer_settlements (added to the change signature), so a settlement created/reversed by one user appears for others without reload and triggers rebuild / AR / statement / history refresh; after a successful create or reverse the client READS BACK the authoritative server settlements instead of trusting the pre-RPC preview. (B5) EXCEPTIONAL UI: when the customer commercial type is Exceptional the inactive Normal terms are hidden on ALL current-policy surfaces — the Add/Edit Customer form hides the Normal Discount + Commission rows and shows only the exceptional terms (stored Normal values are preserved and restored on switching back; cuCTypeToggle), the Quick Entry header shows a ★ Exceptional summary, and the Customers list Discount column shows the exceptional % — while historical transaction rows keep their own frozen source. (B6) REAL FKs: the three foreign keys (settlement→customer, allocation→settlement, allocation→invoice) are created deterministically and ASSERTED to exist (the migration fails loudly if a live schema prevents one — no silent swallow); no cascade delete of financial history. SETTLEMENT SERVER-BOUNDARY HARDENING (rev8): four review blockers fixed IN PLACE in migration 07 (no migration 08; migrations 01–06 unchanged). (B1) The SERVER now OWNS the FIFO allocation: create_customer_settlement takes ONLY p_settlement and authoritatively reconstructs each Confirmed invoice remaining AR from the canonical bases (collections + received cheques + confirmed returns + prior Active settlements), orders oldest-first and derives the allocations itself — the browser never sends authoritative allocations (the old two-arg form is dropped; the client calls the one-arg RPC and sends no allocations). (B2) A positive settlement can never persist with zero/invalid allocations: sum(allocations)=amount, each >0 and <= the invoice available outstanding, one row per invoice enforced by a UNIQUE (settlement_id, invoice_id) index, with FKs allocation→settlement, allocation→invoice, settlement→customer (no cascade delete of financial history); a settlement over the open invoice outstanding is rejected. (B3) Per-customer transaction serialization: a stable customer-key advisory xact lock is taken before the debt re-read + allocation + insert, so two simultaneous settlements can never both pass the same pre-settlement debt — proven by a settlement concurrency test (debt 1000: 700+700 → exactly one succeeds, final debt 300, never negative; 600+400 → both succeed, final debt 0). (B4) Idempotency is PAYLOAD-BOUND: a repeated settlement id returns already ONLY if customer_id/amount/date/reason match; same id with different data raises an idempotency conflict (also on the concurrent unique-violation branch). The server debt/outstanding now use the canonical Confirmed-invoice definition (doc_status Confirmed, null/empty treated as Confirmed — matching isConfirmed(); Draft/Cancelled excluded), and salesperson_id is SERVER-DERIVED from the customer master (payload value ignored). The client also blocks a settlement above the open invoice outstanding, not just above total debt. CONSOLIDATED PATCH (rev7): PART A — Exceptional-customer UI cleanup + PART B — NEW Customer Discount / Settlement (خصم / تسوية). Migration 06 is UNCHANGED; new DB work is only in 07_customer_settlements.sql. PART A (UI/UX only; no accounting change): for a customer whose commercial type is Exceptional, the CURRENT customer UI treats the Exceptional terms as the only active commercial policy — the profile header shows a concise ★ Exceptional summary (Discount/Commission/Bonus from the master) instead of the inactive Normal discount/commission, and the Commission section shows an Exceptional-specific card (Discount/Commission/Bonus + Commission Source: Exceptional Customer Terms, with the note that the normal discount/day-range rules are bypassed) instead of the normal Commission Rule card (no more misleading 20% / 2% / Use Default Rule). Neutral labels (Commission (from this customer) / Commission History, not Basic…), and each Commission-History row now carries its OWN frozen Source badge (Normal | Exceptional Customer | Exceptional Invoice) so historical truth is preserved. Stored Normal values are never deleted/overwritten; print is unchanged (never shows commission/bonus/internal terms). PART B — Discount / Settlement: a STANDALONE, non-cash AR CREDIT that voluntarily reduces the customer receivable (e.g. owes 10,000, settle 1,000 → 9,000). It is NEVER a collection: no cash/bank/cheque, no commission, no bonus, no rep custody, no stock, no fake payment. It reduces AR (customerLedgerBalance / customerAR) and reduces OPEN invoice outstanding OLDEST-FIRST in the ONE canonical rebuild() FIFO lifecycle (a dedicated settlement pass runs AFTER collections/cheques/returns, generating NO commission/bonus/allocations — only inv.settled + derived settlement allocations), so AR and invoice outstanding always reconcile. It shows as its own Discount / Settlement row in the Customer Statement (a credit, never labelled Collection). PRIMARY entry point is the Customer Profile action (+ Discount / Settlement / خصم / تسوية — customer fixed, no selector) plus a Settlements tab (history + Reverse); Quick Entry has a secondary Discount / Settlement tab. Lifecycle Active | Reversed: reversing (reason required) restores AR + the exact invoice outstanding by recomputing without the reversed settlement (no hard delete, full history). PERMISSIONS (client AND server): Create = Administrator | AR Accountant; Reverse = Administrator only; a Sales Representative can do neither. SERVER (migration 07, RPC-only): create_customer_settlement / reverse_customer_settlement are the only writers (each sets rep.privileged before writing); cs_settlement_guard / cs_settlement_alloc_guard reject any direct REST/app write; create enforces role, amount>0, reason, amount ≤ server-computed customer debt (cs_customer_debt — no unintended credit), allocation integrity (belong to the customer, sum to the amount) and is idempotent by id; reverse enforces Administrator + reason + Active→Reversed once; both audited via the existing audit_events / rep_audit. In cloud mode the app calls these RPCs; in demo mode it commits locally. Migrations 01–06 untouched, save_invoice_doc unchanged, Golden v3.19.1 untouched; no production SQL executed, nothing deployed. CORRECTION PASS (rev6): APP-ONLY wiring fix — every invoice-header creation path now resolves the v3.26 commercial snapshot (migration 06 is UNCHANGED; its rejection of a Normal invoice for an Exceptional customer is correct). Root cause: the Historical Invoice / Quick-Entry Historical and the CMI / Customer-Movement-Import flows built a header with no commercial fields, so it defaulted to commercial_mode=Normal and was correctly rejected by cm_invoices_guard for an Exceptional customer. Fix: one canonical helper resolveInvoiceCommercial(cust) — Exceptional customer → freezes the customer master terms (commercial_mode Exceptional / source Exceptional Customer / customerCommercialTypeSnapshot Exceptional / exceptional discount+commission+bonus+note frozen from the master); Normal customer → Normal/0 — is now applied in saveHistoricalInvoice() (before cloudCommitInvoice) and cmiMkInvoice() so header-only/imported invoices carry the same frozen snapshot the standard invoice form already produces. It never invents terms, never makes a Normal customer Exceptional, and never lets a historical/CMI payload set manual exceptional commission/bonus (they are derived from the customer master and frozen at creation). Existing confirmed historical invoices are untouched; no historical recalculation. Header-only exceptional invoices still route commission/bonus through the SAME canonical FIFO lifecycle at the frozen % (a collection earns the frozen commission/bonus, no normal double-count), and the internal Exceptional Customer Terms card shows on the invoice details after save (never on print). The standard invoice form keeps its own richer resolution (it also supports the Administrator one-off Exceptional Invoice and the prelim-conversion frozen path). CORRECTION PASS (rev5): the STORED preliminary invoice + its lines are now RPC-ONLY at the database boundary (migration 06; version stays v3.26.0-WIP). Two dedicated triggers make the trusted server RPCs the ONLY writers: cm_prelim_guard (BEFORE INSERT OR UPDATE on preliminary_invoices) and cm_prelim_line_guard (BEFORE INSERT OR UPDATE OR DELETE on preliminary_invoice_lines). Each RPC — rep_save_prelim / rep_cancel_prelim / rep_convert_prelim — sets rep.privileged=on BEFORE it writes, so the guards return NEW/OLD for the canonical path; ANY direct REST/app write (rep_priv() FALSE — any role, incl. manager/AR) is REJECTED with an exception. This closes direct tampering of the whole stored row — customer_id, salesperson_id, status, submitted+cancelled fields, the commercial snapshot (commercial_mode / commercial_source / customer_commercial_type_snapshot / exceptional_discount/commission/bonus_percent / exceptional_terms_note), the pricing snapshot (base_discount, extra_discount, effective_discount, exception_reason/note, discount_pct, subtotal, discount_amount, total), totals and creator/system fields — AND the stored line snapshot (a caller can no longer alter lines pre-Submit and then submit-only), so a forged stored prelim can never become the trusted conversion source. The pre-existing prelim_guard (conversion / converted_invoice_id) and the migration-03 RLS are unchanged and still run — this is additional defence-in-depth; SELECT is not touched. rep_save_prelim remains the only canonical atomic full-save (it sets rep.privileged before it deletes+reinserts the line set), and the app already writes every preliminary invoice through these RPCs in cloud mode, so no client flow changes. (rev4 superseded: the earlier rev4 approach PRESERVED/normalized the header snapshot on untrusted writes; rev5 replaces it with a hard RPC-only rejection and extends the same boundary to the lines.) CORRECTION PASS (rev3): three review blockers fixed in migration 06 (version stays v3.26.0-WIP). (1) NORMAL-INVOICE SNAPSHOT CONSISTENCY — cm_invoices_guard now normalizes customer_commercial_type_snapshot→Normal on BOTH the trusted and untrusted Normal branches (alongside source/exceptional %s/note), so a Normal invoice can never persist commercial_mode=Normal with customer_commercial_type_snapshot=Exceptional. (2) exceptional_terms_by / exceptional_terms_at ARE SERVER-ONLY — the browser payload is never authoritative: an ordinary Normal-customer INSERT forces blank canonical values, an UPDATE with no real commercial change preserves the OLD by/at regardless of payload, and only a real authorized change stamps the actual actor + a server timestamp (a direct-API forge of only these two columns can no longer persist). (3) DURABLE COMMERCIAL-POLICY AUDIT via the EXISTING audit_events/rep_audit — customer Normal↔Exceptional and exceptional discount/commission/bonus/note changes (before/after, actor, server time) are audited inside cm_customers_guard; a direct/app Exceptional-invoice commercial write is audited inside cm_invoices_guard; the conversion audit now carries the frozen %s; the two client-side commercial logAudit calls are gated to demo-only so cloud writes exactly ONE server-side row (no duplicate). (rev2): the Sales-Rep PRELIMINARY invoice now FREEZES the commercial snapshot server-side — migration 06 CREATE OR REPLACEs rep_save_prelim / rep_convert_prelim from their EXACT live-05 bodies + commercial logic (05 is NOT edited): an Exceptional customer’s mode/source/discount/commission/bonus are DERIVED from the customer master (never the rep browser) and frozen on the prelim (a Basic line’s base becomes the exceptional discount); submit-only preserves that snapshot; conversion BINDS the final invoice header to the STORED prelim snapshot and rejects any mismatch/tamper, so a later customer-master change never alters the converted invoice (no master surprise). Trigger hardening: ANY customer commercial_type change (both directions) + any exceptional-term change requires Administrator (terms actor/time stamped server-side); a one-off Exceptional invoice for a Normal customer is Administrator-only; server enforces source consistency (Normal customer + Exceptional Customer source, or Exceptional customer + Normal, are rejected); a CONFIRMED invoice’s commercial snapshot is immutable even to an Administrator; a Normal invoice can never carry ghost exceptional %s (normalized to 0). Base feature set: NEW: (A) Print / طباعة on the real Invoice Details page and the Preliminary Invoice preview — a clean A4 customer-facing layout via a dedicated print window (no server), RTL-aware, that NEVER exposes salesperson commission %/amount, bonus %/amount, internal terms or audit data; the preliminary printout is clearly marked "Preliminary Invoice / فاتورة مبدئية" and writes/changes nothing. (B) Customers now carry a Commercial Type (Normal | Exceptional) — existing customers are Normal, backwards-compatible; an Exceptional customer stores manual Exceptional Discount/Commission/Bonus % + an internal terms note (Administrator-only to set/change; validated client + server, 0–100 for discount/commission, −100–100 for bonus, never silently clamped). (C) A Normal customer can have per-invoice Commercial Mode Normal | Exceptional — an authorised (non-rep) user may mark a single invoice Exceptional with one-off Discount/Commission/Bonus %; the customer master is never changed and the next invoice defaults back to Normal. (D) In Exceptional mode a BASIC line uses the invoice/customer exceptional discount as its base (No-Discount stays 0; Custom keeps its per-line %; type is never inferred from a percentage). This is DISTINCT from — and does not replace — the existing per-invoice "Exceptional EXTRA Discount" (extra_discount) additive-points feature. (E) Exceptional COMMISSION: an exceptional-mode invoice earns commission at its FROZEN exceptional_commission_percent × the FIFO-allocated amount (not the rule sets / day lookup) — exactly ONE earning per allocation, never also a normal earning. (F) Exceptional BONUS: FROZEN exceptional_bonus_percent × the FIFO-allocated amount (not the day-range table); collection days are still recorded but never choose the rate; no double bonus. Both reuse the SAME canonical FIFO allocation lifecycle (no parallel engine); returns/reversals recompute at the frozen exceptional basis (no global-rate fallback, no double reversal). (G/H) Every confirmed invoice permanently stores its commercial snapshot (commercial_mode, commercial_source Normal | Exceptional Customer | Exceptional Invoice, customer_commercial_type_snapshot, exceptional_* %, terms note) — FROZEN at save; a later customer-term change never recalculates a confirmed invoice. (I/J) Customer profile + Invoice details show an internal commercial-terms card/badge (never on printouts). (K) The Sales-Rep preliminary preview shows an Exceptional customer’s inherited (read-only) terms to an authorised viewer; conversion produces an Exceptional invoice that freezes the terms. (L) Server-side: migration 06 triggers reject out-of-range exceptional %s, block a Sales Representative from authoring an Exceptional-mode invoice, and restrict customer exceptional-term changes to an Administrator. DB delivered as additive/idempotent 06_customer_invoice_commercial_modes.sql (NOT executed) — safe after the live 01→02→04→03→05; existing customers/invoices default to Normal with NO historical recalculation; save_invoice_doc is unchanged (it already persists the header field-complete). Golden v3.19.1 untouched; no production SQL executed. PRIOR v3.25.4-WIP — SALES REPRESENTATIVE WORKSPACE · RUNTIME FIXES + REVIEW CORRECTIONS (rev2). REVIEW CORRECTIONS (7 blockers): [C1] submit-only (rep_save_prelim with p_lines=null) now transitions status ONLY and preserves the STORED commercial snapshot + every stored line — customer/salesperson are read from the STORED parent, never from the browser, so clicking Submit from the list can no longer wipe the exceptional discount/reason or desync the total from the lines; [C2] rep_convert_prelim now REQUIRES status=Submitted to START a conversion — a Draft can no longer be converted even by a direct authorized RPC call (Converted stays idempotent, Cancelled blocked); the app prelimConvert() enforces the same, and the deployed content-binding is unchanged; [C3] rep_cancel_prelim has an explicit authorized-role gate — a Sales Representative may cancel only their own Draft/Submitted, a manager role (Administrator/AR Accountant/Finance Manager/Accountant) may cancel, and EVERY other authenticated role is rejected; [C4] cloud Preview FAILS CLOSED — a failed header/lines fetch or a missing stored record shows an error and returns, never falling back to stale local cache; [C5] a Custom-discount line at 0% may sit in a Draft but CANNOT be Submitted (enforced client-side and in rep_save_prelim), which also stops a Block-mode rep submitting an unresolved Custom line; [C6] the submit notification/actor now uses the LINKED salespersons.name (the business "مندوب" name) via rep_actor_name(); [C7] base + exceptional discount > 100% is REJECTED with a clear error (no silent clamp). SQL delivered as additive 05_sales_rep_workspace_runtime_fixes.sql (which now also re-creates rep_convert_prelim with the Submitted guard; NOT executed). RUNTIME FIXES (original v3.25.4). (1) Preliminary-invoice CLOUD SAVE fixed: in cloud mode the whole save lifecycle goes through ONE server-atomic RPC rep_save_prelim (create/replace-lines/validate/optionally Submit/notify/audit) — no more fire-and-forget line writes, so a Submitted invoice can never persist with zero lines; editing a Draft atomically replaces its stored line set; a save failure keeps Draft and shows a clear cloud error (no false success). (2) Stock Visibility: rep_stock now uses effective company stock (SUM(warehouse_stock) or fallback product_variants.stock); Availability mode shows ONLY متوفر/غير متوفر (no numbers, no "On hand"), qty is NULL for the rep. (3) Cancel is server-atomic (rep_cancel_prelim): Draft/Submitted → Cancelled persists first, so admin and rep see the same status after reload; Converted cannot be cancelled. (4) Exactly ONE Administrator notification per real Draft→Submitted transition, written inside the submit transaction (existing notifications), retry-safe. (5) Preliminary-invoice PREVIEW (read-only) loads the STORED cloud record + lines with the full commercial breakdown; authorized converters get Convert (explicit confirm) which calls the EXISTING rep_convert_prelim only. (6/7) Discount model now MIRRORS the canonical invoice engine — product discount type (Basic=auto customer discount / No Discount=0 / Custom=manual when Allowed) + invoice-level Exceptional Discount (additive points, reason required, never on No-Discount); conversion preserves the stored discount TYPE (never inferred from a percentage) and the frozen commercial snapshot, and refuses on master-data drift. (8) Server-side commercial validation in rep_save_prelim (scope, customer ownership, product/variant, discount rules, qty/price, totals). SQL delivered as additive 05_sales_rep_workspace_runtime_fixes.sql (NOT executed). rep_convert_prelim remains the ONLY conversion path; no parallel engine/notification system. Prior v3.25.3-WIP — SALES REPRESENTATIVE WORKSPACE · MICRO-HARDENING (SQL-only; app logic unchanged). (1) The link-only conversion bypass rep_link_converted_invoice is DROPPED — rep_convert_prelim (atomic) is the ONLY supported conversion path (the app already uses it). (2) An additive RESTRICTIVE app_settings SELECT policy blocks Sales Representatives even when a legacy permissive p_as_read policy is present — a rep gets repSettings ONLY via rep_settings(). (3) rep_convert_prelim now binds conversion content to the preliminary invoice server-side (customer_id, salesperson_id, and per-line product/variant/qty/unit-price checked against the STORED prelim) so a tampered or stale browser payload cannot convert one prelim into an unrelated final invoice. (4) The posting RPCs retry/reallocate on a PK collision (unique_violation) for collections/cheques/audit_events, so a concurrent LEGACY max(id)+1 writer can never fail the rep transaction. Verified on the Postgres RLS replica: 93/93 assertions + two concurrency tests (40-way rep-vs-rep, and rep-vs-legacy mixed writers). Prior v3.25.2-WIP — SALES REPRESENTATIVE WORKSPACE · FINAL PRODUCTION HARDENING. (1) Preliminary-invoice conversion is now ATOMIC and exactly-once: in cloud mode the client calls rep_convert_prelim(prelim_id, header, lines), which WRAPS the existing canonical save_invoice_doc so the real invoice is created AND the prelim is linked AND audited in ONE server transaction — a lost response + retry returns the SAME invoice (no orphan, no duplicate). (2) Default PUBLIC/anon EXECUTE is REVOKED on every sensitive Sales-Rep function; only authenticated is granted, and rep_stock() now rejects unauthorized callers outright (anon/unknown roles) instead of falling through to the exact-quantity branch. (3) A Sales Representative can no longer GET the whole app_settings row — the rep-read policy is removed; the rep receives ONLY the sanitized repSettings subset via the rep_settings() RPC. (4) Every privileged RPC (post/reject collection, post/reject spending, convert) writes its audit_events row INSIDE the same transaction (existing audit convention), never via a later browser call. (5) Concurrency-safe id allocation: the RPCs allocate collection/cheque/custody/audit ids under a transaction-scoped advisory lock, so simultaneous postings never collide (proven with 40 parallel postings → all distinct, no lost posting). Verified on the Postgres RLS replica: 80/80 assertions + the concurrency test. Prior v3.25.1-WIP — SALES REPRESENTATIVE WORKSPACE · SERVER-BOUNDARY HARDENING. Every privileged action now runs through SECURITY DEFINER RPCs that the client calls in cloud mode (the hardened RLS/triggers block direct privileged writes): (1) Post Immediately is DB-complete — a Sales Representative posts their own collection/spending through rep_post_collection / rep_post_spending WITHOUT any direct write to canonical financial tables or custody; (2) the configured role lists (collectionApprovers / spendingApprovers / prelimConverters) are SERVER-ENFORCED inside the RPCs (reading app_settings.data.repSettings) — a role omitted from a list cannot approve/convert via REST, and immutability triggers block direct status transitions too; (3) Stock Visibility=Availability no longer leaks exact quantities — reps lost direct SELECT on warehouse_stock and read stock only via rep_stock(), which nulls the qty under an Availability policy; (4) EXACTLY-ONCE posting — each posting/linkage RPC locks the submission, no-ops if already posted, and is guarded by unique indexes, so a network-retry never creates a second collection/cheque/custody movement/converted invoice; (5) Converted/Cancelled/Submitted preliminary-invoice lines are immutable (line writes/deletes only while Draft); (6) posted rep collection/spending rows are immutable to ordinary UPDATE (salesperson_id/customer_id/amount/method/posted-ids/creator protected by triggers). The canonical invoice/collection/cheque/FIFO engines are REUSED, not duplicated. Verified on the Postgres RLS replica: 61/61 assertions incl. REST-bypass, idempotency/retry, real-rep Post-Immediately, Availability no-leak, and settings-omission. Prior v3.25.0-WIP — SALES REPRESENTATIVE WORKSPACE (additive). A dedicated Arabic/RTL workspace (المناديب) built on the EXISTING Sales Representative role + profiles.salesperson_id SCOPE (a rep is scoped server-side to their linked salesperson; never chosen in the browser). NEW: (1) Preliminary Invoices (فاتورة مبدئية) — a rep drafts a pre-sale quote for their own customer with live stock availability (Exact qty or Available/Unavailable per Settings); out-of-stock lines are ADDABLE (warning only). A preliminary invoice has NO accounting effect (no AR/FIFO/commission/bonus/stock) until CONVERTED. Conversion is Settings-role-gated (a rep cannot convert by default) and goes through the EXISTING invoice engine (openInvoiceForm prefill → save_invoice_doc RPC); the resulting real invoice id is stored on the prelim and a unique index + status guard prevent double-conversion. (2) Rep Collections — a rep submits a collection (Cash / Cheque / Bank Transfer-InstaPay / Vodafone Cash) for their own customer; Setting "Collection Posting" = Pending Approval (default) or Post Immediately. A PENDING submission has NO financial effect; on approval by a configured approver it posts EXACTLY ONE canonical collection/cheque through the EXISTING saveRecordCollection engine (cheque becomes a real received cheque via the existing cheque model — AR reduced / FIFO / collection once; later clearing never re-collects), recorded post-once via posted_collection_id/posted_cheque_id. (3) Rep Funds / Custody (عهدة المندوب) — an APPEND-ONLY ledger; the balance per method is DERIVED (SUM in − SUM out), never a stored editable figure. (4) Rep Spending / Handover (صرف) with a Pending/Immediate workflow + approvers. (5) My Funds screen (confirmed + pending, balance by method, money-in/out history with running balance). (6) Admin "Sales Representatives" overview + rep switcher (NO impersonation — an admin views as admin; admin actions are attributed to the admin in the audit). (7) DB-backed Settings subsection (repSettings in app_settings.data): Collection Posting, Collection Approvers, Preliminary-Invoice Conversion Roles, Discount Permission, Stock Visibility, Spending Workflow, Spending Approvers. Server boundary: 4 reviewable idempotent SQL migrations (01 schema / 02 settings / 03 RLS / 04 helpers) add 5 new tables + my_salesperson_id() and scoped RLS so a rep can only ever read/act on their own salesperson scope even if the UI is bypassed (no using(true); RESTRICTIVE no-self-approve / no-rep-convert guards; append-only custody). Reuses the EXISTING notifications + audit; adds no parallel approval center. Golden v3.19.1 is untouched; NO production SQL executed by the app. Prior v3.24.2-WIP — AR operational stock-ledger resilience: applyMovement now writes each cloud record independently (stock ledger first: product_variants → inventory_movements → warehouse_stock, then the redundant invoice header re-sync last, each in its own try/catch). This ensures an AR Accountant confirming a sale/return still persists the stock movement + warehouse balance even though the (redundant) invoice-header re-sync is refused by the approval guard (invoices UPDATE is Admin-only). No financial logic, approval rule, or figure changed — only write isolation/ordering. Pairs with the ar_operational_access_patch.sql RLS patch (AR SELECT across AR screens; INSERT for customers/salespersons/collections/cheques/invoice+return headers/credits/commissions/opening balances/stock ledger; UPDATE for customers/salespersons/stock/commissions; posted invoice/return/cheque edits + line injection remain Admin-approval). Prior v3.24.1-WIP — Nav permission correction for AR Accountant: Dashboard is now NO ACCESS (removed from the AR allow-list in both the base and the outermost nav gate; a precise router guard redirects an AR who lands on the Dashboard to their home page = Customers). Sales Representatives / Salespeople (nav id "reps") is ADDED to the AR allow-list, and Customers stays — both remain fully visible and usable (AR keeps seeAll, no salesperson SCOPE filter, so all customer + salesperson data shows). No change to approval rules, RLS write restrictions, financial logic, Customer Charges, or cheque rules. Prior v3.24.0-WIP — FINAL application pass for the AR-Accountant permission/approval work (PART B + PART C of the reviewed security migration). PART B (Notifications): notify() now stamps createdById=meId() and TMAP.notifications maps created_by_id, so the server INSERT policy attributes every notification to its real author (no impersonation/forgery); Mark as Read → rpc(notif_mark_read), Mark all as Read and opening the Notifications page → rpc(notif_mark_all_read) — notification CONTENT is now immutable to recipients (server revokes UPDATE; only read_by changes, via SECURITY DEFINER RPC), history preserved, no hard delete, unread badge updates immediately. PART C (Invoices/Returns server boundary): secure/cloud CREATE + CONFIRM for invoices and returns now persists the header AND all lines atomically through the canonical SECURITY DEFINER RPCs save_invoice_doc / save_return_doc (field-complete via jsonb_populate_record — every currently-persisted column round-trips with no loss); the redundant direct header push in doConfirmInvoice/doConfirmReturn is skipped on the RPC path; all local FIFO/stock/AR/commission/bonus/audit/rebuild logic is unchanged. Server RLS: invoice_lines/return_lines are fully locked (a line can only be written by the definer RPC → no line injection/edit on posted docs); invoices/return_invoices block AR UPDATE/DELETE (no editing/voiding a posted document) while allowing header-only creation (CMI historical import / Historical entry). AR edits to EXISTING posted invoices/returns still create Administrator Approval requests (unchanged); admin approval still applies exactly once via the canonical engine. Cheque AMOUNT modification remains BLOCKED (no new engine). Customer Expense (public.customer_charges) unchanged (404 expected until its migration runs). Prior v3.23.1-WIP — Closes the approval gaps + fixes the Customer Expense cloud 404. (1) LINE-LEVEL invoice edits by an AR Accountant are now captured as a pending Administrator approval (full line/header snapshot) and, on approve, replayed through the EXISTING canonical posted-invoice editor (saveAdminPostedEdit) so stock/AR/commission/bonus recompute exactly once with no duplicated logic. (2) Cheque AMOUNT edits: no safe canonical received-cheque amount-adjustment engine exists, so amount change is reported BLOCKED (needs a financial-rule decision) while all safe cheque edits (dates/bank/reference/number) continue through approval. (3) Customer Expense HTTP 404 root cause = the public.customer_charges table does not exist yet (migration not run): the failure happens on the read-back-first check BEFORE any insert, so nothing is written locally or in the cloud, customer debt does not change, and Retry is duplicate-safe; the error message now names the missing table and points to the migration. (4) Migrations revised to RESTRICTIVE RLS (proving an AR Accountant cannot bypass approval via a direct Supabase UPDATE/DELETE) + a read-only pg_policies audit script. Prior v3.23.0-WIP — AR Accountant role + Administrator Approval workflow + Notifications inbox. NEW role "AR Accountant" scoped to the AR area (Customers, Bulk Add, AR, Invoices, Invoice Due Date Rebuild, Returns, Collections, Customer Movement Import, Cheques, Suppliers) — enforced at nav/route/action/write layers (+ RLS migration for the server boundary). AR Accountant edits to EXISTING invoices/cheques/returns, and void/cancel/reverse, and the due-date rebuild APPLY, are captured as PENDING Administrator Approval requests (the authoritative record is untouched until an Admin approves; on approve the change applies exactly once via the existing canonical path). New Approvals Center (Admin) with Pending/Approved/Rejected/All, BEFORE→AFTER diff, conflict revalidation, and a sidebar pending badge; a My Requests view for the requester. Notifications became a persistent inbox: Mark as read, Mark all as read, opening the page marks currently-unread as read, unread badge, preserved history (no hard delete), and approval events notify the relevant users. Two new cloud tables (approval_requests, notifications) via a separate idempotent migration (NOT executed). Prior v3.22.1-WIP — Customer Expense (مصاريف على العميل) standalone customer-account DEBIT movement — no longer attached to a Collection. Its own Date + Amount + OPTIONAL free-text Reason; increases customer debt; shows as its own row in the Customer Statement; editable (in place) and reversible/cancellable (status Reversed, kept in history). NEVER a collection: never enters FIFO, never generates commission or bonus, never changes Collections totals. ONE canonical engine (openCustomerExpenseForm / saveCustomerExpense / reverseCustomerExpense) exposed from THREE entry points — Customer Profile, a dedicated Quick Entry tab (inline), and the main Customers page (with customer search). Wired into the authoritative customerAR / customerLedgerBalance / Customer Statement / aging. Removed the v3.22.0 collection-linked design entirely (no expense field on the collection form, no expense-type config, no collection void prompt). One cloud table (customer_charges), simplified: date, amount, reason, status — no collection/type linkage. Prior v3.22.0-WIP — Customer Expenses in Quick Entry → Collection (collection-linked; now replaced). Prior: v3.21.7-WIP — Cheque Due/Collection Sync: added a LIVE Rescan that pulls the current cheque + collection records from Supabase (read-only) before comparing, a live-scan timestamp, and clear separation of the CURRENT LIVE SCAN from the historical run log — so an old successful run can no longer masquerade as current state. No cloud writes in the scan. Prior: v3.21.6-WIP — Bonus Audit (READ-ONLY): reconciles current (engine, live DB.allocations) bonus against an independent from-source recompute (approved FIFO + tiers), by salesperson/customer/month + allocation match count, plus closed-period snapshot staleness. Proves bonus uses invoiceDate→collectionDate only (dueDate is not an input) so the invoice due-date rebuild cannot change bonus. No writes, no rebuild, no correction. Builds on v3.21.5 Bulk-Add per-customer discount.';
+const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev20.4) — FINAL PRE-PRODUCTION CLOSEOUT (review build; migrations 11/12/13 patched in place [12 and 13 byte-unchanged], admin-users Edge Function patched; NO production SQL, NO deployment). (A) Users and Access provisioning is ATOMIC: profile role + Inventory section access commit in ONE PostgreSQL transaction — migration 11 adds a service_role-only admin_reconcile_provisioned_user RPC and an Administrator-only admin_update_user_atomic RPC (role allow-list, SR requires salesperson, non-SR clears it, an Inventory User REQUIRES a complete 4-boolean access object, non-Inventory clears all section rows, rollback on any failure); the Edge Function and the Edit-User Save each call ONE atomic RPC, so a partial write can never leave role=Inventory User with default-ON access. (B) Fractional prices no longer auto-round to whole EGP: egp()/egp0() display up to 2 decimals (500 stays 500, 144.5 stays 144.5, 144.25 stays 144.25; integers unchanged) and every price input uses step=0.01; stock/reorder integers and accounting round(x,2) are unchanged. (C) Invoice product search no longer reverses Arabic or numbers: the raw query stays in the input (matching uses a lowercased copy) and rerender is caret-safe via srchKeepCaret with dir=auto. (D) An Exceptional invoice + Additional discount uses the ACTIVE exceptional base: the badge, lines, totals, preview and the Customer-Basic-Info line all use activeCommercialBasePct() (Exceptional Invoice 40% + Additional 10% = 50%, additive points, rejected above 100), never the inactive Normal customer discount; commission stays frozen at Exceptional 3%. (E) Preserves every rev15 to rev20.3 fix (request_key required + claim-before-side-effects, migration 12 fail-closed, access-first Inventory boot, Catalog prerequisite dependency, RLS narrowing, migration 10 casts, cost masking, product lifecycle, Debit/Credit accounting, Arabic settlement).';
 /*==================================================================================
   TEXTILE CREDIT & COLLECTIONS ERP  —  single-file interactive prototype
   Shared data model + FIFO replay engine. All views derive from one dataset.
@@ -586,8 +586,13 @@ function dueDaysDisp(inv){ var n=dueDaysNum(inv); return n==null?'—':n+'d'; }
 function addDays(d,n){return new Date(d.getTime()+n*DAY)}
 function fmtDate(d){return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}
 function fmtDateShort(d){return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}
-function egp(n){if(n==null||isNaN(n))return '—';const s=Math.round(n).toLocaleString('en-US');return 'EGP '+s}
-function egp0(n){return Math.round(n).toLocaleString('en-US')}
+// rev20.4 (Scope B) — DISPLAY money at up to 2 decimals so a fractional stored price shows its real value (144.5 →
+// "144.5", 144.25 → "144.25") instead of being auto-rounded to a whole EGP. Integers stay clean (500 → "500", never
+// "500.00"); toLocaleString(maximumFractionDigits:2) also trims float noise (144.499999… → "144.5"). This is a DISPLAY
+// change only — accounting still uses the canonical 2-decimal round() elsewhere. Stock/reorder integers are unaffected.
+function _egpFmt(n){const v=+n;if(!isFinite(v))return '0';return v.toLocaleString('en-US',{maximumFractionDigits:2});}
+function egp(n){if(n==null||isNaN(n))return '—';return 'EGP '+_egpFmt(n);}
+function egp0(n){return _egpFmt(n);}
 function pct(n){return (n).toFixed(1)+'%'}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
@@ -1584,7 +1589,7 @@ function rebuild(){
   // DB.allocations, NO commissionTxns — it only reduces inv.balance and records DERIVED settlement allocations
   // (for the statement, reconciliation & exact reversal). Reversed settlements are ignored, so a reversal simply
   // recomputes without them and restores the invoices exactly. It is NEVER a collection.
-  (DB.customerSettlements||[]).filter(s=>(s.status||'Active')==='Active')
+  (DB.customerSettlements||[]).filter(s=>(s.status||'Active')==='Active'&&(s.direction||'Credit')!=='Debit')   // v3.26 (rev20) — only CREDIT settlements allocate FIFO; Debit is a standalone AR increase (zero allocations)
     .sort((a,b)=>(parseDateInput(a.date)-parseDateInput(b.date))||(a.id-b.id)).forEach(st=>{
       let remaining=round(+st.amount||0,2); if(remaining<=0){st._unapplied=0;return;}
       if(!custById(st.customerId)){st._unapplied=remaining;return;}
@@ -1648,7 +1653,13 @@ function customerChargesDebit(custId){return round(customerChargesOf(custId).red
 //    receivable). ACTIVE ones only (a reversal sets status='Reversed' → excluded). NEVER a collection: it never
 //    enters FIFO commission/bonus. It feeds the single authoritative AR net position (ledger / profile / statement). ──
 function customerSettlementsOf(custId){return (DB.customerSettlements||[]).filter(x=>+x.customerId===+custId&&(x.status||'Active')==='Active');}
-function customerSettlementsCredit(custId){return round(customerSettlementsOf(custId).reduce((s,x)=>s+(+x.amount||0),0),2);}
+// v3.26 (rev20) — a settlement now carries a DIRECTION. Credit (the original behaviour) is a non-cash AR CREDIT that
+// REDUCES the receivable; Debit is a non-cash AR DEBIT that INCREASES it (zero allocations, never a collection). The
+// amount is always POSITIVE; the direction decides the sign. Legacy rows (no direction) are Credit. This mirrors the
+// server: debt netting adds (Debit − Credit) to AR, and only Credit rows allocate FIFO.
+function customerSettlementsCredit(custId){return round(customerSettlementsOf(custId).filter(x=>(x.direction||'Credit')!=='Debit').reduce((s,x)=>s+(+x.amount||0),0),2);}
+function customerSettlementsDebit(custId){return round(customerSettlementsOf(custId).filter(x=>(x.direction||'Credit')==='Debit').reduce((s,x)=>s+(+x.amount||0),0),2);}
+function customerSettlementsNet(custId){return round(customerSettlementsCredit(custId)-customerSettlementsDebit(custId),2);}   // AR reduction (Credit − Debit)
 function agingBucketForDate(d){ if(!d)return 'current'; const past=daysBetween(startOfDay(d),startOfDay(TODAY)); if(past<=0)return 'current'; if(past<=30)return 'b30'; if(past<=60)return 'b60'; if(past<=90)return 'b90'; return 'b90p'; }
 function customerLedgerBalance(custId){
   let bal=0;
@@ -1658,7 +1669,8 @@ function customerLedgerBalance(custId){
   DB.cheques.filter(ch=>ch.customerId===custId&&['Received','Deposited','Cleared'].includes(ch.status)).forEach(ch=>{bal-=(+ch.amount||0);});
   bal+=customerOpeningDebit(custId)-customerOpeningCredit(custId);   // Debit opening increases AR; Credit opening reduces it
   bal+=customerChargesDebit(custId);   // v3.22 — customer expenses are a debit that increases AR (never a collection)
-  bal-=customerSettlementsCredit(custId);   // v3.26 — Discount/Settlement is a non-cash CREDIT that reduces AR (never a collection)
+  bal-=customerSettlementsCredit(custId);   // v3.26 — Credit Settlement is a non-cash CREDIT that reduces AR (never a collection)
+  bal+=customerSettlementsDebit(custId);    // v3.26 (rev20) — Debit Settlement is a non-cash DEBIT that increases AR (never a collection, zero allocations)
   return round(bal,2);
 }
 // One reconciled customer financial position (used by profile / statement footer / net position / credit consumption).
@@ -1670,15 +1682,16 @@ function customerAR(custId){
   const cheques=round(DB.cheques.filter(ch=>ch.customerId===custId&&['Received','Deposited','Cleared'].includes(ch.status)).reduce((s,ch)=>s+(+ch.amount||0),0),2);
   const openingDebit=customerOpeningDebit(custId), openingCredit=customerOpeningCredit(custId);
   const charges=customerChargesDebit(custId);   // v3.22 — customer expenses (a debit); NEVER a collection
-  const settlements=customerSettlementsCredit(custId);   // v3.26 — Discount/Settlement (a non-cash credit); NEVER a collection
+  const settlements=customerSettlementsCredit(custId);   // v3.26 — Credit Settlement (a non-cash AR credit); NEVER a collection
+  const settlementsDebit=customerSettlementsDebit(custId);   // v3.26 (rev20) — Debit Settlement (a non-cash AR debit); NEVER a collection, zero allocations
   const reductions=round(collections+returns+cheques+openingCredit+settlements,2);
-  const net=round(invoices+openingDebit+charges-reductions,2);                       // == customerLedgerBalance
-  const otherNet=round(invoices+openingDebit+charges-collections-returns-cheques-settlements,2); // excludes credit openings
+  const net=round(invoices+openingDebit+charges+settlementsDebit-reductions,2);                       // == customerLedgerBalance
+  const otherNet=round(invoices+openingDebit+charges+settlementsDebit-collections-returns-cheques-settlements,2); // excludes credit openings
   const creditUsed=round(Math.min(openingCredit,Math.max(0,otherNet)),2);
   const creditRemaining=round(openingCredit-creditUsed,2);
   const openingDebitResidual=round(Math.max(0,openingDebit-Math.max(0,reductions-invoices)),2); // reductions settle invoices first (policy: configurable)
   const chargesResidual=round(Math.max(0,charges-Math.max(0,reductions-invoices-openingDebit)),2); // v3.22 — settlement order: invoices → opening debit → charges (charges last)
-  return {invoices,collections,returns,cheques,openingDebit,openingCredit,charges,chargesResidual,settlements,creditUsed,creditRemaining,openingDebitResidual,
+  return {invoices,collections,returns,cheques,openingDebit,openingCredit,charges,chargesResidual,settlements,settlementsDebit,creditUsed,creditRemaining,openingDebitResidual,
     net,owes:round(Math.max(0,net),2),credit:round(Math.max(0,-net),2),position:net>0.5?'Owes':(net<-0.5?'Credit':'Settled')};
 }
 // ═══════════════ v3.21 — CHEQUES COUNT AS COLLECTIONS AT RECEIPT ═══════════════
@@ -2358,8 +2371,9 @@ function customerStatement(custId,fromStr,toStr){
   // never a collection, never FIFO/commission/bonus. Dated at its own movement date; carries the free-text reason.
   (DB.customerSettlements||[]).filter(x=>+x.customerId===custId&&(x.status||'Active')==='Active').forEach(x=>{
     const d=parseDateInput(x.date)||TODAY;
-    rows.push({txnDate:d,entryDate:x.createdAt||'',type:'Discount / Settlement',ref:x.reference||('STL-'+x.id),invoiceNumber:'',
-      debit:0,credit:+x.amount||0,pending:0,status:'',salespersonId:x.salespersonId||0,
+    const isDebit=(x.direction||'Credit')==='Debit';   // v3.26 (rev20) — Debit Settlement is a DEBIT movement (increases AR); Credit is a CREDIT (reduces AR)
+    rows.push({txnDate:d,entryDate:x.createdAt||'',type:isDebit?'Debit Settlement':'Credit Settlement',ref:x.reference||('STL-'+x.id),invoiceNumber:'',
+      debit:isDebit?(+x.amount||0):0,credit:isDebit?0:(+x.amount||0),pending:0,status:'',salespersonId:x.salespersonId||0,
       notes:(x.reason||''),_id:'stl'+x.id});});
   // sort by transaction date, then entry order (id) so backdated rows land at their true business date
   rows.sort((a,b)=>a.txnDate-b.txnDate || String(a._id).localeCompare(String(b._id)));
@@ -2503,6 +2517,44 @@ function flashUpdated(){
 const I18N_KEY='texcredit_lang';
 let APP_LANG=(function(){try{return localStorage.getItem(I18N_KEY)||'en';}catch(e){return 'en';}})();
 const I18N={ar:{
+  /*==== v3.26 (rev20) — Users & Access · Product Lifecycle · Debit/Credit Settlement ====*/
+  'Discount / Settlement':'خصم / تسوية',
+  'Save Settlement':'حفظ التسوية','Reverse Settlement':'عكس التسوية','Reverse Reason':'سبب العكس',
+  'Restores the amount previously reduced from the customer debt.':'يعيد المبلغ الذي تم خصمه سابقًا إلى مديونية العميل.',
+  'Removes the extra debit previously added to the customer debt.':'يلغي المبلغ المدين الذي تمت إضافته سابقًا إلى مديونية العميل.',
+  'Access Restricted':'الوصول مقيّد','An administrator changed your access.':'قام أحد المسؤولين بتغيير صلاحياتك.',
+  'Credit Settlement':'تسوية دائنة','Debit Settlement':'تسوية مدينة',
+  'Credit Settlement (reduces debt)':'تسوية دائنة (تُخفّض المديونية)','Debit Settlement (increases debt)':'تسوية مدينة (تزيد المديونية)',
+  'Adjust the customer debt — not a collection; no commission or bonus.':'تعديل مديونية العميل — ليس تحصيلاً؛ بدون عمولة أو مكافأة.',
+  'Debit increases the customer debt. It is not a collection, creates no invoice, and generates no commission or bonus.':'التسوية المدينة تزيد مديونية العميل. ليست تحصيلاً، ولا تُنشئ فاتورة، ولا تولّد عمولة أو مكافأة.',
+  'Credit reduces the customer debt (applied oldest-first to open invoices). It is not a collection and generates no commission or bonus.':'التسوية الدائنة تُخفّض مديونية العميل (تُطبَّق على أقدم الفواتير المفتوحة أولاً). ليست تحصيلاً ولا تولّد عمولة أو مكافأة.',
+  'non-cash AR adjustment — not a collection':'تعديل غير نقدي على الذمم — ليس تحصيلاً',
+  'Credit total':'إجمالي الدائن','Debit total':'إجمالي المدين','No settlements yet':'لا توجد تسويات بعد','Entered By':'أدخلها',
+  // Users & Access
+  'Users & Access':'المستخدمون والصلاحيات','Manage the real people who can sign in, their role, and their inventory-section access.':'إدارة الأشخاص الحقيقيين الذين يمكنهم تسجيل الدخول، وأدوارهم، وصلاحيات وصولهم لأقسام المخزون.',
+  '+ Add User':'+ إضافة مستخدم','Add User':'إضافة مستخدم','Edit User':'تعديل مستخدم','Full Name':'الاسم الكامل','Role':'الدور','Linked Salesperson':'مندوب المبيعات المرتبط',
+  'Inventory Section Access':'صلاحيات أقسام المخزون','Save User':'حفظ المستخدم','Loading users…':'جارٍ تحميل المستخدمين…','No users yet':'لا يوجد مستخدمون بعد',
+  'A Sales Representative must be linked to a salesperson.':'يجب ربط مندوب المبيعات بسجلّ مندوب.','User saved':'تم حفظ المستخدم','User created':'تم إنشاء المستخدم',
+  'This page is available to Administrators only.':'هذه الصفحة متاحة للمسؤولين فقط.','Users & Access is only available in cloud (database-enforced) mode.':'المستخدمون والصلاحيات متاح فقط في وضع السحابة (الأمان المُنفَّذ بقاعدة البيانات).',
+  'These sections can only NARROW the Inventory User base access — they can never grant finance or cost.':'هذه الأقسام يمكنها فقط تضييق صلاحية مستخدم المخزون الأساسية — ولا يمكنها أبدًا منح صلاحيات مالية أو تكلفة.',
+  'When Catalog is off, Inventory and Stock Transfers are effectively unavailable.':'عند إيقاف كتالوج الأصناف، يصبح المخزون وتحويلات المخزون غير متاحين فعليًا.',
+  'Unavailable while Catalog is off':'غير متاح أثناء إيقاف الكتالوج',
+  'Access could not be loaded':'تعذّر تحميل الصلاحيات','Cannot load your access right now — press Retry.':'تعذّر تحميل صلاحياتك الآن — اضغط إعادة المحاولة.',
+  'Catalog':'كتالوج الأصناف','Inventory':'المخزون','Warehouses':'المستودعات','Stock Transfers':'تحويلات المخزون','Status':'الحالة','Disabled':'معطّل','Save Access':'حفظ الصلاحيات','Access updated':'تم تحديث الصلاحيات',
+  'Email is required and must be valid.':'البريد الإلكتروني مطلوب ويجب أن يكون صحيحًا.','A full name is required.':'الاسم الكامل مطلوب.',
+  'You':'أنت','You cannot change your own role.':'لا يمكنك تغيير دورك بنفسك.','Cloud not configured':'لم تُهيّأ السحابة',
+  // Product lifecycle
+  'Active':'مفعّل','Archived':'مؤرشف','All':'الكل','Archive':'أرشفة','Restore':'إعادة التفعيل','Delete Permanently':'حذف نهائي','Archive Product':'أرشفة الصنف','Restore Product':'إعادة تفعيل الصنف','Delete Product':'حذف الصنف','Keep Archived':'إبقاء المنتج مؤرشفًا',
+  'Archived products are hidden from day-to-day lists but keep all history. You can restore them anytime.':'الأصناف المؤرشفة مخفية من القوائم اليومية لكنها تحتفظ بكامل تاريخها. يمكنك استعادتها في أي وقت.',
+  'Permanently delete this product? This cannot be undone.':'حذف هذا الصنف نهائيًا؟ لا يمكن التراجع عن ذلك.',
+  'This product has stock or history and can never be permanently deleted. Archive it instead.':'هذا الصنف له مخزون أو تاريخ ولا يمكن حذفه نهائيًا أبدًا. قم بأرشفته بدلاً من ذلك.',
+  'This product cannot be permanently deleted because it has business or inventory history.':'لا يمكن حذف هذا المنتج نهائيًا لأنه لديه حركة سابقة أو تاريخ مخزون.',
+  'This variant cannot be permanently deleted because it has business or inventory history.':'لا يمكن حذف هذا الخيار نهائيًا لأنه لديه حركة سابقة أو تاريخ مخزون.',
+  'Only a product with zero stock and no history can be permanently deleted.':'يمكن فقط حذف الصنف الذي ليس له مخزون ولا تاريخ حذفًا نهائيًا.',
+  'Product archived':'تمت أرشفة الصنف','Product restored':'تمت استعادة الصنف','Product permanently deleted':'تم حذف الصنف نهائيًا','Checking…':'جارٍ التحقق…',
+  'Restore the product before recording new stock movements.':'أعد تفعيل الصنف قبل تسجيل حركات مخزون جديدة.',
+  'Cannot delete':'تعذّر الحذف','Delete this variant permanently?':'حذف هذا الخيار نهائيًا؟','Variant permanently deleted':'تم حذف الخيار نهائيًا',
+  'Archived Parent':'صنف رئيسي مؤرشف',
   /*==== v3.26.2 HOTFIX — Inventory User role-gated tools ====*/
   'Not available for this role yet':'غير متاح لهذا الدور حاليًا',
   'This catalog tool is being made cloud-safe for the Inventory User.':'يجري تجهيز هذه الأداة لتعمل بأمان مع السحابة لمستخدم المخزون.',
@@ -5324,20 +5376,22 @@ function openCustomerSettlementForm(preCustId){
   const custOpts=customerSelectOptions(custId,custId);
   const todayStr=dateToInput(TODAY);
   openModal(`
-    <div class="modal-h"><div><h3>&#128184; ${esc(t('Discount / Settlement'))} <span class="no-i18n">/ خصم / تسوية</span></h3><div class="sub">${esc(t('Voluntarily reduce the customer debt — not a collection; no commission or bonus.'))}</div></div><button class="x" data-close>&times;</button></div>
+    <div class="modal-h"><div><h3>&#128184; ${esc(t('Discount / Settlement'))}${APP_LANG==='en'?' <span class="no-i18n">/ خصم / تسوية</span>':''}</h3><div class="sub">${esc(t('Adjust the customer debt — not a collection; no commission or bonus.'))}</div></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b">
       <div class="form-grid">
         <div class="form-row"><label>${esc(t('Customer'))} <span class="req">*</span></label>
           <select id="st_cust" dir="auto" ${fixedCust?'disabled':''}><option value="">${esc(t('Select customer...'))}</option>${custOpts}</select><span class="err">${esc(t('Select a customer'))}</span></div>
         <div class="form-row"><label>${esc(t('Date'))} <span class="req">*</span></label><input type="date" id="st_date" value="${todayStr}" max="${todayStr}">${todayChip('st_date')}</div>
+        <div class="form-row full"><label>${esc(t('Type'))} <span class="req">*</span></label>
+          <select id="st_dir" dir="auto"><option value="Credit">${esc(t('Credit Settlement (reduces debt)'))}</option><option value="Debit">${esc(t('Debit Settlement (increases debt)'))}</option></select></div>
         <div class="form-row"><label>${esc(t('Amount (EGP)'))} <span class="req">*</span></label><input type="number" id="st_amount" placeholder="0" min="0.01" step="0.01"><span class="err">${esc(t('Enter a valid amount'))}</span></div>
         <div class="form-row full"><label>${esc(t('Reason'))} <span class="req">*</span></label><input id="st_reason" dir="auto" placeholder="${esc(t('e.g. negotiated discount, goodwill, rounding settlement…'))}"><span class="err">${esc(t('A reason is required'))}</span></div>
       </div>
-      <div class="section-note" style="font-size:11.5px;border-color:#f0dca6;background:#fdf6e3;margin-top:8px">${esc(t('This reduces customer debt but is not a collection and does not generate commission or bonus.'))}</div>
+      <div id="st_dir_note" class="section-note" style="font-size:11.5px;border-color:#f0dca6;background:#fdf6e3;margin-top:8px"></div>
       <div id="st_ctx" style="margin-top:6px"></div>
       <div id="st_status"></div>
     </div>
-    <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn" id="st_save_more" disabled>${esc(t('Save & Add Another'))}</button><button class="btn primary" id="st_save" disabled>${esc(t('Save Settlement'))} <span class="no-i18n">/ حفظ الخصم</span></button></div>
+    <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn" id="st_save_more" disabled>${esc(t('Save & Add Another'))}</button><button class="btn primary" id="st_save" disabled>${esc(t('Save Settlement'))}</button></div>
   `,'md');
   if(custId)document.getElementById('st_cust').value=custId;
   const upd=()=>updateStForm();
@@ -5345,29 +5399,43 @@ function openCustomerSettlementForm(preCustId){
   document.getElementById('st_amount').oninput=upd;
   document.getElementById('st_date').onchange=upd;
   document.getElementById('st_reason').oninput=upd;   // v3.26.1 fix — typing the reason (incl. Arabic) enables Save immediately
+  const _dir=document.getElementById('st_dir'); if(_dir)_dir.onchange=upd;   // v3.26 (rev20) — Credit/Debit direction
   document.getElementById('st_save').onclick=()=>saveCustomerSettlement(false);
   const more=document.getElementById('st_save_more'); if(more)more.onclick=()=>saveCustomerSettlement(true);
   upd();
 }
+function stFormDirection(){ const d=(document.getElementById('st_dir')||{}).value; return d==='Debit'?'Debit':'Credit'; }
 function updateStForm(){
   const cid=+((document.getElementById('st_cust')||{}).value)||0;
   const amt=round(+((document.getElementById('st_amount')||{}).value)||0,2);
   const reason=(((document.getElementById('st_reason')||{}).value)||'').trim();
+  const dir=stFormDirection();
   const debt=cid>0?customerCurrentDebt(cid):0;
-  // the server derives allocations oldest-first over OPEN INVOICE outstanding and caps at min(debt, that
-  // outstanding); mirror it here so the UI blocks anything the server would reject (over debt OR unallocatable).
-  const prev=(cid>0&&amt>0)?settlementAllocPreview(cid,amt):{allocations:[],unapplied:0};
-  const overDebt=amt>debt+0.005;
-  const overOpen=(prev.unapplied||0)>0.005;
-  const over=overDebt||overOpen;
+  // v3.26 (rev20) — the helper note + validation differ by direction. CREDIT (the original behaviour) reduces AR and is
+  // capped at min(debt, open-invoice outstanding); DEBIT increases AR, has ZERO allocations and no debt cap.
+  const note=document.getElementById('st_dir_note');
+  if(note)note.innerHTML=(dir==='Debit')
+    ? esc(t('Debit increases the customer debt. It is not a collection, creates no invoice, and generates no commission or bonus.'))
+    : esc(t('Credit reduces the customer debt (applied oldest-first to open invoices). It is not a collection and generates no commission or bonus.'));
+  let over=false, overDebt=false, overOpen=false, prev={allocations:[],unapplied:0};
+  if(dir==='Credit'){
+    // the server derives allocations oldest-first over OPEN INVOICE outstanding and caps at min(debt, that
+    // outstanding); mirror it here so the UI blocks anything the server would reject (over debt OR unallocatable).
+    prev=(cid>0&&amt>0)?settlementAllocPreview(cid,amt):{allocations:[],unapplied:0};
+    overDebt=amt>debt+0.005; overOpen=(prev.unapplied||0)>0.005; over=overDebt||overOpen;
+  }   // DEBIT: any positive amount is valid (no cap, no allocation)
   const ok=cid>0 && amt>0 && !!reason && !over;
   const sb=document.getElementById('st_save'); if(sb)sb.disabled=!ok;
   const mb=document.getElementById('st_save_more'); if(mb)mb.disabled=!ok;
   const ctx=document.getElementById('st_ctx');
   if(ctx){ if(cid>0){ const c=custById(cid);
-      const allocHtml=prev.allocations.length?('<div style="margin-top:4px;font-size:11px" class="muted">'+esc(t('Applied oldest-first'))+': '+prev.allocations.map(a=>esc(a.invoiceNumber||('#'+a.invoiceId))+' '+egp(a.amount)).join(' · ')+'</div>'):'';
-      const warn=overDebt?esc(t('A settlement cannot exceed the current customer debt.')):(overOpen?esc(t('A settlement cannot exceed the open invoice outstanding.')):'');
-      ctx.innerHTML=`<div class="section-note" style="font-size:11.5px;border-color:${over?'#f3c7c7':'#cfe0f5'};background:${over?'var(--red-bg)':'#eef5fc'};${over?'color:var(--red)':''}">${esc(c?c.name:'')}${c&&c.code?(' · '+esc(c.code)):''} · ${esc(t('Current Debt'))}: <b>${egp(debt)}</b>${(!over&&amt>0)?(' → <b>'+egp(round(debt-amt,2))+'</b>'):''}${over?('<br><b>'+warn+'</b>'):''}</div>${(!over)?allocHtml:''}`;
+      if(dir==='Debit'){
+        ctx.innerHTML=`<div class="section-note" style="font-size:11.5px;border-color:#f0dca6;background:#fdf6e3">${esc(c?c.name:'')}${c&&c.code?(' · '+esc(c.code)):''} · ${esc(t('Current Debt'))}: <b>${egp(debt)}</b>${amt>0?(' → <b>'+egp(round(debt+amt,2))+'</b>'):''}</div>`;
+      } else {
+        const allocHtml=prev.allocations.length?('<div style="margin-top:4px;font-size:11px" class="muted">'+esc(t('Applied oldest-first'))+': '+prev.allocations.map(a=>esc(a.invoiceNumber||('#'+a.invoiceId))+' '+egp(a.amount)).join(' · ')+'</div>'):'';
+        const warn=overDebt?esc(t('A settlement cannot exceed the current customer debt.')):(overOpen?esc(t('A settlement cannot exceed the open invoice outstanding.')):'');
+        ctx.innerHTML=`<div class="section-note" style="font-size:11.5px;border-color:${over?'#f3c7c7':'#cfe0f5'};background:${over?'var(--red-bg)':'#eef5fc'};${over?'color:var(--red)':''}">${esc(c?c.name:'')}${c&&c.code?(' · '+esc(c.code)):''} · ${esc(t('Current Debt'))}: <b>${egp(debt)}</b>${(!over&&amt>0)?(' → <b>'+egp(round(debt-amt,2))+'</b>'):''}${over?('<br><b>'+warn+'</b>'):''}</div>${(!over)?allocHtml:''}`;
+      }
     } else ctx.innerHTML=''; }
 }
 async function saveCustomerSettlement(addAnother){
@@ -5382,23 +5450,29 @@ async function saveCustomerSettlement(addAnother){
   setInvalid('st_cust',!custId); setInvalid('st_amount',!(amount>0)); setInvalid('st_reason',!reason);
   if(bad){ toast(t('Check the form'),t('Please fix the highlighted fields'),'warn'); return; }
   const cust=custById(custId); if(!cust){ toast(t('Customer not found'),'','warn'); return; }
+  const direction=stFormDirection();   // v3.26 (rev20) — Credit (reduces AR, FIFO) | Debit (increases AR, zero allocations)
   const debt=customerCurrentDebt(custId);
-  if(amount>debt+0.005){ setInvalid('st_amount',true); toast(t('Amount too high'),t('A settlement cannot exceed the current customer debt')+' ('+egp(debt)+')','err'); return; }
-  const prev=settlementAllocPreview(custId,amount);
-  if((prev.unapplied||0)>0.005){ setInvalid('st_amount',true); toast(t('Amount too high'),t('A settlement cannot exceed the open invoice outstanding.'),'err'); return; }
+  let prev={allocations:[],unapplied:0};
+  if(direction==='Credit'){
+    // CREDIT only: caps at min(debt, open-invoice outstanding). DEBIT has no cap and no allocations.
+    if(amount>debt+0.005){ setInvalid('st_amount',true); toast(t('Amount too high'),t('A settlement cannot exceed the current customer debt')+' ('+egp(debt)+')','err'); return; }
+    prev=settlementAllocPreview(custId,amount);
+    if((prev.unapplied||0)>0.005){ setInvalid('st_amount',true); toast(t('Amount too high'),t('A settlement cannot exceed the open invoice outstanding.'),'err'); return; }
+  }
   const now=entryStamp();
   // blocker 3 — a stable request_key is the DISTRIBUTED identity: reused across retries of the SAME settlement so
   // a lost-response retry is idempotent; two different users never collide (the server allocates the numeric id).
+  // The direction is part of the signature so a Credit and a Debit with the same amount/date/reason never collapse.
   const _date=dateVal||dateToInput(TODAY);
-  const sig=[custId,amount,_date,reason].join('|');
+  const sig=[custId,amount,_date,reason,direction].join('|');
   const reqKey=(_stlPending&&_stlPending.sig===sig)?_stlPending.key:_stlNewKey();
   _stlPending={sig,key:reqKey};
   const stId=Math.max(0,DB.seqCustomerSettlement||0,...(DB.customerSettlements||[]).map(x=>+x.id||0))+1;   // demo/local id only
-  const rec={id:stId,customerId:custId,salespersonId:cust.salespersonId,amount,date:_date,reason,status:'Active',reference:'STL-'+stId,requestKey:reqKey,
+  const rec={id:stId,customerId:custId,salespersonId:cust.salespersonId,amount,direction,date:_date,reason,status:'Active',reference:'STL-'+stId,requestKey:reqKey,
     reversedBy:'',reversedById:'',reversedAt:'',reverseReason:'',createdBy:auditUser(),createdById:(typeof auditActorId==='function'?auditActorId():''),createdAt:now,notes:''};
   const commitLocal=()=>{ DB.customerSettlements=DB.customerSettlements||[]; if(!DB.customerSettlements.some(x=>+x.id===+rec.id))DB.customerSettlements.push(rec);
     DB.seqCustomerSettlement=Math.max(DB.seqCustomerSettlement||0,+rec.id);
-    if(!(typeof secureMode==='function'&&secureMode())) logAudit('Customer Settlement Created','CustomerSettlement',rec.id,rec.reference,{customer:cust.name,amount,date:rec.date,reason,allocations:prev.allocations},custId);
+    if(!(typeof secureMode==='function'&&secureMode())) logAudit((direction==='Debit'?'Debit Settlement Created':'Credit Settlement Created'),'CustomerSettlement',rec.id,rec.reference,{customer:cust.name,amount,direction,date:rec.date,reason,allocations:prev.allocations},custId);
     persist(); rebuild(); };
   const done=()=>{ renderNav(); FLASH_NEXT=true; toast(t('Settlement recorded'),cust.name+' · '+egp(amount),'ok');
     if(addAnother){ closeModal(); openCustomerSettlementForm(custId); } else { closeModal(); renderView(); } };
@@ -5409,7 +5483,7 @@ async function saveCustomerSettlement(addAnother){
       // outstanding), serializes per customer, allocates the numeric id, and is payload-bound idempotent by
       // request_key. We send request_key + the settlement fields only (salesperson_id server-derived; no client
       // allocations trusted). Then we READ BACK the authoritative server settlements instead of trusting the preview.
-      const p_settlement={request_key:reqKey,customer_id:custId,date:rec.date,amount,reason};
+      const p_settlement={request_key:reqKey,customer_id:custId,date:rec.date,amount,reason,direction};
       const res=await sbRpc('create_customer_settlement',{p_settlement},true);
       if(!res||res.ok!==true){ throw new Error((res&&res.message)||t('Settlement was not saved')); }
       _stlPending=null;   // committed on the server — a fresh save starts a new request_key
@@ -5426,8 +5500,13 @@ function reverseCustomerSettlement(id){
   const st=customerSettlementById(id); if(!st)return;
   if(!canReverseSettlement()){ toast(t('Not permitted'),t('Only an Administrator may reverse a settlement'),'warn'); return; }
   if((st.status||'Active')!=='Active'){ toast(t('Settlement'),t('Reversed'),'warn'); return; }
+  // v3.26 (rev20.1) — direction-aware reverse copy. A Credit reverse restores the amount that was reduced; a Debit
+  // reverse removes the extra debit that was added. The accounting is unchanged (status→Reversed → excluded from AR).
+  const _revSub=((st.direction||'Credit')==='Debit')
+    ? t('Removes the extra debit previously added to the customer debt.')
+    : t('Restores the amount previously reduced from the customer debt.');
   openModal(`
-    <div class="modal-h"><div><h3>&#8635; ${esc(t('Reverse Settlement'))}</h3><div class="sub">${esc(t('Restores the customer debt by the exact settlement amount. Kept in history as Reversed.'))}</div></div><button class="x" data-close>&times;</button></div>
+    <div class="modal-h"><div><h3>&#8635; ${esc(t('Reverse Settlement'))}</h3><div class="sub">${esc(_revSub)}</div></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b">
       <div class="section-note" style="border-color:#f3c7c7;background:var(--red-bg);color:var(--red)"><b>${egp(st.amount)}</b>${st.reason?(' · '+esc(st.reason)):''} · ${esc(custName(st.customerId))}</div>
       <div class="form-row full" style="margin-top:8px"><label>${esc(t('Reverse Reason'))} <span class="req">*</span></label><input id="st_rev_reason" dir="auto" placeholder="${esc(t('Why is this settlement being reversed?'))}"><span class="err">${esc(t('A reverse reason is required'))}</span></div>
@@ -5444,7 +5523,7 @@ async function doReverseCustomerSettlement(id){
   if(!reason){ const el=document.getElementById('st_rev_reason'); const row=el&&el.closest('.form-row'); if(row)row.classList.add('invalid'); toast(t('Reason required'),t('A reverse reason is required'),'warn'); return; }
   const go=document.getElementById('st_rev_go'); if(go)go.disabled=true;
   const applyLocal=()=>{ st.status='Reversed'; st.reversedBy=auditUser(); st.reversedById=(typeof auditActorId==='function'?auditActorId():''); st.reversedAt=entryStamp(); st.reverseReason=reason;
-    if(!(typeof secureMode==='function'&&secureMode())) logAudit('Customer Settlement Reversed','CustomerSettlement',st.id,st.reference||('STL-'+st.id),{customer:custName(st.customerId),amount:+st.amount||0,date:st.date,reason},st.customerId);
+    if(!(typeof secureMode==='function'&&secureMode())) logAudit('Customer Settlement Reversed','CustomerSettlement',st.id,st.reference||('STL-'+st.id),{customer:custName(st.customerId),amount:+st.amount||0,direction:(st.direction||'Credit'),date:st.date,reason},st.customerId);
     persist(); rebuild(); closeModal(); renderView(); toast(t('Settlement reversed'),custName(st.customerId)+' · '+egp(st.amount),'ok'); };
   try{
     if(typeof secureMode==='function'&&secureMode()){
@@ -5463,16 +5542,19 @@ function customerSettlementListHTML(custId){
   const rows=customerSettlementsFor(custId);
   const canRev=canReverseSettlement();
   const canCreate=canCreateSettlement();
-  const body=rows.length?rows.map(x=>{const rev=(x.status||'Active')==='Reversed';
-    return `<tr class="${rev?'muted':''}"><td>${esc(mfgDate(x.date))}</td><td class="num t-strong ${rev?'':'pos'}">${egp(x.amount)}</td><td>${esc(x.reason||'—')}</td>
+  const body=rows.length?rows.map(x=>{const rev=(x.status||'Active')==='Reversed';const isDebit=(x.direction||'Credit')==='Debit';
+    return `<tr class="${rev?'muted':''}"><td>${esc(mfgDate(x.date))}</td>
+      <td>${isDebit?`<span class="badge b-amber">${esc(t('Debit Settlement'))}</span>`:`<span class="badge b-blue">${esc(t('Credit Settlement'))}</span>`}</td>
+      <td class="num t-strong ${rev?'':(isDebit?'neg':'pos')}">${isDebit?'+':'−'}${egp(x.amount)}</td><td>${esc(x.reason||'—')}</td>
       <td>${rev?`<span class="badge b-gray">${esc(t('Reversed'))}</span>`:`<span class="badge b-green">${esc(t('Active'))}</span>`}</td>
       <td>${esc(x.createdBy||'—')}</td>
-      <td>${(canRev&&!rev)?`<button class="btn sm danger" onclick="reverseCustomerSettlement(${x.id})">${esc(t('Reverse'))}</button>`:(rev&&x.reverseReason?('<span class="muted" style="font-size:11px">'+esc(x.reverseReason)+'</span>'):'—')}</td></tr>`;}).join(''):`<tr><td colspan="6"><div class="empty" style="padding:12px"><b>${esc(t('No settlements yet'))}</b></div></td></tr>`;
-  const active=round(rows.filter(x=>(x.status||'Active')==='Active').reduce((s,x)=>s+(+x.amount||0),0),2);
-  return `<div class="card"><div class="card-h"><h3>&#128184; ${esc(t('Discount / Settlement'))} <span class="sub">/ خصم / تسوية · ${esc(t('non-cash AR reduction — not a collection'))}</span></h3></div>
+      <td>${(canRev&&!rev)?`<button class="btn sm danger" onclick="reverseCustomerSettlement(${x.id})">${esc(t('Reverse'))}</button>`:(rev&&x.reverseReason?('<span class="muted" style="font-size:11px">'+esc(x.reverseReason)+'</span>'):'—')}</td></tr>`;}).join(''):`<tr><td colspan="7"><div class="empty" style="padding:12px"><b>${esc(t('No settlements yet'))}</b></div></td></tr>`;
+  const activeCredit=round(rows.filter(x=>(x.status||'Active')==='Active'&&(x.direction||'Credit')!=='Debit').reduce((s,x)=>s+(+x.amount||0),0),2);
+  const activeDebit=round(rows.filter(x=>(x.status||'Active')==='Active'&&(x.direction||'Credit')==='Debit').reduce((s,x)=>s+(+x.amount||0),0),2);
+  return `<div class="card"><div class="card-h"><h3>&#128184; ${esc(t('Discount / Settlement'))}${APP_LANG==='en'?' <span class="sub">/ خصم / تسوية · '+esc(t('non-cash AR adjustment — not a collection'))+'</span>':`<span class="sub">${esc(t('non-cash AR adjustment — not a collection'))}</span>`}</h3></div>
     <div class="card-b">
-      ${canCreate?`<div style="margin-bottom:10px"><button class="btn primary" onclick="openCustomerSettlementForm(${custId})">+ ${esc(t('Discount / Settlement'))} <span class="no-i18n">/ خصم / تسوية</span></button> <span class="muted" style="font-size:12px;margin-inline-start:8px">${esc(t('Active total'))}: <b>${egp(active)}</b></span></div>`:''}
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('Date'))}</th><th class="num">${esc(t('Amount'))}</th><th>${esc(t('Reason'))}</th><th>${esc(t('Status'))}</th><th>${esc(t('Entered By'))}</th><th>${esc(t('Actions'))}</th></tr></thead><tbody>${body}</tbody></table></div>
+      ${canCreate?`<div style="margin-bottom:10px"><button class="btn primary" onclick="openCustomerSettlementForm(${custId})">+ ${esc(t('Discount / Settlement'))}${APP_LANG==='en'?' <span class="no-i18n">/ خصم / تسوية</span>':''}</button> <span class="muted" style="font-size:12px;margin-inline-start:8px">${esc(t('Credit total'))}: <b>${egp(activeCredit)}</b>${activeDebit>0.005?(' · '+esc(t('Debit total'))+': <b>'+egp(activeDebit)+'</b>'):''}</span></div>`:''}
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('Date'))}</th><th>${esc(t('Type'))}</th><th class="num">${esc(t('Amount'))}</th><th>${esc(t('Reason'))}</th><th>${esc(t('Status'))}</th><th>${esc(t('Entered By'))}</th><th>${esc(t('Actions'))}</th></tr></thead><tbody>${body}</tbody></table></div>
     </div></div>`;
 }
 
@@ -6073,7 +6155,7 @@ function renderRep360Body(s,m,custs){
   }
 }
 /*=================================== INVENTORY ===================================*/
-const prodState={tab:'products',search:'',category:'',color:'',size:'',stock:'',dtype:'',page:1};
+const prodState={tab:'products',search:'',category:'',color:'',size:'',stock:'',dtype:'',lifecycle:'active',page:1};   // v3.26 (rev20) — lifecycle: active | archived | all
 function invStatusBadge(st){const map={ok:['b-green','In stock'],low:['b-amber','Low'],out:['b-red','Out']};const[c,l]=map[st];return `<span class="badge ${c}">${l}</span>`;}
 function needsReviewCount(){return DB.products.filter(p=>p.discountReviewed===false).length;}
 PAGES.inventory=function(){
@@ -6092,8 +6174,8 @@ PAGES.inventory=function(){
       ${!isInventoryUserSecure()?`<button class="btn" onclick="go('rawmat')">&#129521; ${esc(t('Raw Materials'))}</button>`:''}
       <button class="btn" onclick="go('movements')">&#128220; Movements</button>
       ${can('exportMovements')?exportBtn('stock'):''}
-      ${can('editProducts')?`<button class="btn" onclick="openProductForm()">+ ${esc(t('Add Product'))}</button>`:''}
-      ${can('editProducts')?`<button class="btn primary" onclick="pgStart('new')">+ ${esc(t('New Product with Sizes'))}</button>`:''}
+      ${(can('editProducts')&&(typeof sectionEnabled!=='function'||sectionEnabled('catalog')))?`<button class="btn" onclick="openProductForm()">+ ${esc(t('Add Product'))}</button>`:''}
+      ${(can('editProducts')&&(typeof sectionEnabled!=='function'||sectionEnabled('catalog')))?`<button class="btn primary" onclick="pgStart('new')">+ ${esc(t('New Product with Sizes'))}</button>`:''}
     </div></div>
   ${review>0?`<div class="section-note" style="border-color:#f6d68a;background:#fdf6e6"><b>${review} product${review>1?'s':''} need a Discount Type review.</b> Migrated products default to <b>Basic</b> until an authorised user confirms each one. Open a product and set its Discount Type to clear the flag.${can('editProducts')?` <span class="link" onclick="prodState.tab='products';prodState.dtype='__review';PAGES.inventory()">Show them</span>`:''}</div>`:''}
   <div class="kpi-grid" style="grid-template-columns:repeat(6,1fr);gap:10px">
@@ -6116,6 +6198,7 @@ PAGES.inventory=function(){
       <div class="fld"><label>Size</label><select class="inp" id="pf_size"><option value="">All</option>${sizes.map(c=>`<option ${prodState.size===c?'selected':''}>${c}</option>`).join('')}</select></div>
       <div class="fld"><label>Stock</label><select class="inp" id="pf_stock"><option value="">All</option><option value="low" ${prodState.stock==='low'?'selected':''}>Low stock</option><option value="out" ${prodState.stock==='out'?'selected':''}>Out of stock</option><option value="in" ${prodState.stock==='in'?'selected':''}>In stock</option></select></div>
       <div class="fld"><label>Discount Type</label><select class="inp" id="pf_dtype"><option value="">All</option>${DISCOUNT_TYPES.map(dt=>`<option value="${dt}" ${prodState.dtype===dt?'selected':''}>${t(dt)}</option>`).join('')}<option value="__review" ${prodState.dtype==='__review'?'selected':''}>${t('Needs review')}</option></select></div>
+      <div class="fld"><label>${esc(t('Status'))}</label><select class="inp" id="pf_life"><option value="active" ${prodState.lifecycle==='active'?'selected':''}>${esc(t('Active'))}</option><option value="archived" ${prodState.lifecycle==='archived'?'selected':''}>${esc(t('Archived'))}</option><option value="all" ${prodState.lifecycle==='all'?'selected':''}>${esc(t('All'))}</option></select></div>
       <div class="fld"><label>&nbsp;</label><button class="btn sm" onclick="resetProdFilters()">Clear</button></div>
     </div>
     <div id="invTableBox"></div>
@@ -6123,13 +6206,17 @@ PAGES.inventory=function(){
   const b=id=>document.getElementById(id);
   b('pf_search').oninput=e=>{prodState.search=e.target.value;prodState.page=1;renderInvTableBox();};
   ['pf_cat','pf_col','pf_size','pf_stock','pf_dtype'].forEach((id,i)=>b(id).onchange=e=>{prodState[['category','color','size','stock','dtype'][i]]=e.target.value;prodState.page=1;renderInvTableBox();});
+  { const lf=b('pf_life'); if(lf)lf.onchange=e=>{prodState.lifecycle=e.target.value;prodState.page=1;renderInvTableBox();}; }   // v3.26 (rev20) — Active/Archived/All
   renderInvTableBox();
 };
-function resetProdFilters(){Object.assign(prodState,{search:'',category:'',color:'',size:'',stock:'',dtype:'',page:1});PAGES.inventory();}
+function resetProdFilters(){Object.assign(prodState,{search:'',category:'',color:'',size:'',stock:'',dtype:'',lifecycle:'active',page:1});PAGES.inventory();}
+// v3.26 (rev20) — Product lifecycle state filter (Active/Archived/All). A product is Archived when active===false.
+function matchLifecycle(p){const lc=prodState.lifecycle||'active';const archived=(p.active===false);if(lc==='active')return !archived;if(lc==='archived')return archived;return true;}
 function matchDtype(p){if(!prodState.dtype)return true;if(prodState.dtype==='__review')return p.discountReviewed===false;return (p.discountType||'Basic')===prodState.dtype;}
 function invPageBox(p){prodState.page=p;renderInvTableBox();}
 function matchVariantFilters(v){
   const p=productById(v.productId);if(!p)return false;
+  if(!matchLifecycle(p))return false;   // v3.26 (rev20) — hide archived products' variants unless Archived/All
   const q=prodState.search.toLowerCase();
   if(q&&!(p.name.toLowerCase().includes(q)||p.code.toLowerCase().includes(q)||v.sku.toLowerCase().includes(q)||v.color.toLowerCase().includes(q)||v.size.toLowerCase().includes(q)))return false;
   if(prodState.category&&p.category!==prodState.category)return false;
@@ -6157,6 +6244,7 @@ function renderInvTableBox(){
   }else{
     let prods=DB.products.filter(p=>{
       const q=prodState.search.toLowerCase();
+      if(!matchLifecycle(p))return false;   // v3.26 (rev20) — Active/Archived/All
       if(prodState.category&&p.category!==prodState.category)return false;
       if(!matchDtype(p))return false;
       const vs=variantsOf(p.id);
@@ -6175,8 +6263,10 @@ function renderInvTableBox(){
       <td class="num">${vs.length}</td>
       <td class="num t-strong">${units}</td><td class="num">${egp0(p.defaultPrice)}</td>
       <td>${out?`<span class="badge b-red">${out} out</span> `:''}${low?`<span class="badge b-amber">${low} low</span>`:(!out?'<span class="badge b-green">OK</span>':'')}</td>
-      <td>${p.active?'<span class="badge b-green">Active</span>':'<span class="badge b-gray">Inactive</span>'}</td>
-      ${can('editProducts')?`<td class="num row-act" onclick="event.stopPropagation()"><button class="icon-act" title="Edit product" onclick="openProductForm(${p.id})">&#9998;</button></td>`:''}
+      <td>${(p.active===false)?`<span class="badge b-amber">${esc(t('Archived'))}</span>`:`<span class="badge b-green">${esc(t('Active'))}</span>`}</td>
+      ${can('editProducts')?`<td class="num row-act" onclick="event.stopPropagation()"><button class="icon-act" title="${esc(t('Edit'))}" onclick="openProductForm(${p.id})">&#9998;</button>${(p.active===false)
+        ? `<button class="btn sm" title="${esc(t('Restore'))}" onclick="lcRestoreProduct(${p.id})">${esc(t('Restore'))}</button><button class="btn sm danger" title="${esc(t('Delete Permanently'))}" onclick="lcDeleteProduct(${p.id})">${esc(t('Delete'))}</button>`
+        : `<button class="btn sm" title="${esc(t('Archive'))}" onclick="lcArchiveProduct(${p.id})">${esc(t('Archive'))}</button><button class="btn sm danger" title="${esc(t('Delete Permanently'))}" onclick="lcDeleteProduct(${p.id})">${esc(t('Delete'))}</button>`}</td>`:''}
       </tr>`;}).join(''):`<tr><td colspan="10"><div class="empty"><div class="e-ic">&#128230;</div><b>No products match</b>${can('editProducts')?' · <span class="link" onclick="openProductForm()">Add a product</span>':''}</div></td></tr>`;
     box.innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Code</th><th>Product</th><th>Category</th><th>Disc. Type</th><th class="num">Variants</th><th class="num">Units</th><th class="num">Base Price</th><th>Stock</th><th>Status</th>${can('editProducts')?'<th class="num col-act">Actions</th>':''}</tr></thead><tbody>${body}</tbody></table></div>`;
   }
@@ -6193,14 +6283,19 @@ PAGES.product=function(p){
   V.innerHTML=`
   <div class="page-head"><div>
     <p style="margin:0"><span class="link" onclick="go('inventory')">Inventory</span> / ${esc(prod.name)}</p>
-    <h1 style="margin-top:4px">${esc(prod.name)} <span class="badge b-gray" style="vertical-align:middle">${prod.code}</span> ${dtypeBadge(prod.discountType||'Basic')} ${prod.active?'':'<span class="badge b-gray">Inactive</span>'}</h1>
+    <h1 style="margin-top:4px">${esc(prod.name)} <span class="badge b-gray" style="vertical-align:middle">${prod.code}</span> ${dtypeBadge(prod.discountType||'Basic')} ${(prod.active===false)?`<span class="badge b-amber" style="vertical-align:middle">${esc(t('Archived'))}</span>`:`<span class="badge b-green" style="vertical-align:middle">${esc(t('Active'))}</span>`}</h1>
     <p>${prod.category}${prod.brand?' · '+esc(prod.brand):''} · ${vs.length} variants · ${units} units in stock · Commission: <b>${commissionTypeFor(prod.discountType||'Basic')}</b>${prod.discountReviewed===false?' · <span style="color:var(--amber-d,#b45309)">Discount Type needs review</span>':''}</p></div>
     <div class="ph-actions"><button class="btn" onclick="go('inventory')">&#8592; Back</button>
-      ${can('editProducts')?`<button class="btn" onclick="openProductForm(${prod.id})">&#9998; Edit</button>`:''}
-      ${can('editProducts')?`<button class="btn" onclick="openVariantForm(${prod.id})">+ ${esc(t('Add Variant'))}</button>`:''}
-      ${canCatalogBulk()?`<button class="btn" onclick="pgStart('missing',${prod.id})">&#10010; ${esc(t('Generate Missing Variants'))}</button>`:''}
-      ${canCatalogBulk()?`<button class="btn" onclick="pgStart('duplicate',${prod.id})">&#128203; ${esc(t('Duplicate Product'))}</button>`:''}
-      ${can('stockIn')?`<button class="btn primary" onclick="openStockIn(${vs[0]?vs[0].id:'null'})">&#8595; Stock In</button>`:''}</div></div>
+      ${can('editProducts')?`<button class="btn" onclick="openProductForm(${prod.id})">&#9998; ${esc(t('Edit'))}</button>`:''}
+      ${/* rev20.1 (3C): operational NEW-transaction actions are only offered on an ACTIVE product; an archived product is read-only history until Restore */''}
+      ${(prod.active!==false&&can('editProducts'))?`<button class="btn" onclick="openVariantForm(${prod.id})">+ ${esc(t('Add Variant'))}</button>`:''}
+      ${(prod.active!==false&&canCatalogBulk())?`<button class="btn" onclick="pgStart('missing',${prod.id})">&#10010; ${esc(t('Generate Missing Variants'))}</button>`:''}
+      ${(prod.active!==false&&canCatalogBulk())?`<button class="btn" onclick="pgStart('duplicate',${prod.id})">&#128203; ${esc(t('Duplicate Product'))}</button>`:''}
+      ${(prod.active!==false&&can('stockIn'))?`<button class="btn primary" onclick="openStockIn(${vs[0]?vs[0].id:'null'})">&#8595; Stock In</button>`:''}
+      ${/* rev20.1 (2C): product lifecycle actions on the details page */''}
+      ${(can('editProducts')&&prod.active!==false)?`<button class="btn" onclick="lcArchiveProduct(${prod.id})">&#128451; ${esc(t('Archive Product'))}</button>`:''}
+      ${(can('editProducts')&&prod.active===false)?`<button class="btn" onclick="lcRestoreProduct(${prod.id})">&#8635; ${esc(t('Restore Product'))}</button>`:''}
+      ${can('editProducts')?`<button class="btn danger" onclick="lcDeleteProduct(${prod.id})">&#128465; ${esc(t('Delete Product'))}</button>`:''}</div></div>
   ${prod.description?`<div class="section-note">${esc(prod.description)}</div>`:''}
   <div class="card row-gap"><div class="card-h"><h3>Variants</h3><span class="sub">Stock is tracked per variant</span></div>
     <div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
@@ -6208,8 +6303,8 @@ PAGES.product=function(p){
     <tbody>${vs.length?vs.map(v=>{const st=variantStatus(v);return `<tr>
       <td class="t-strong">${v.sku}</td><td class="muted">${esc(v.barcode||'')}</td><td>${v.color}</td><td>${v.size}</td><td class="num">${egp0(vWholesale(v))}</td><td class="num">${egp0(vRetail(v))}</td>
       <td class="num t-strong ${st==='out'?'neg':''}">${v.stock}</td><td class="num"><span class="${st==='low'||st==='out'?'neg':'muted'}">${v.reorderLevel}</span>${can('editProducts')?` <button class="icon-act" title="Set Minimum Stock" onclick="openMinStock(${v.id})" style="width:22px;height:22px;font-size:11px">&#9998;</button>`:''}</td><td>${invStatusBadge(st)}</td>
-      ${(can('adjustStock')||can('editProducts'))?`<td class="num row-act">${can('adjustStock')?`<button class="icon-act" title="Adjust stock" onclick="openStockAdjust(${v.id})">&#9878;</button>`:''}${can('stockIn')?`<button class="icon-act" title="Stock in" onclick="openStockIn(${v.id})">&#8595;</button>`:''}${can('editProducts')?`<button class="icon-act" title="Edit" onclick="openVariantForm(${prod.id},${v.id})">&#9998;</button>`:''}${canCatalogBulk()?`<button class="icon-act" title="${esc(t('Duplicate Variant'))}" onclick="duplicateVariant(${v.id})">&#128203;</button>`:''}</td>`:''}
-      </tr>`;}).join(''):`<tr><td colspan="10"><div class="empty"><b>No variants yet</b>${can('editProducts')?' · <span class="link" onclick="openVariantForm('+prod.id+')">Add one</span>':''}</div></td></tr>`}</tbody>
+      ${(can('adjustStock')||can('editProducts'))?`<td class="num row-act">${(prod.active!==false&&can('adjustStock'))?`<button class="icon-act" title="Adjust stock" onclick="openStockAdjust(${v.id})">&#9878;</button>`:''}${(prod.active!==false&&can('stockIn'))?`<button class="icon-act" title="Stock in" onclick="openStockIn(${v.id})">&#8595;</button>`:''}${can('editProducts')?`<button class="icon-act" title="Edit" onclick="openVariantForm(${prod.id},${v.id})">&#9998;</button>`:''}${(prod.active!==false&&canCatalogBulk())?`<button class="icon-act" title="${esc(t('Duplicate Variant'))}" onclick="duplicateVariant(${v.id})">&#128203;</button>`:''}${can('editProducts')?`<button class="icon-act" title="${esc(t('Delete Permanently'))}" onclick="lcDeleteVariant(${v.id})">&#128465;</button>`:''}</td>`:''}
+      </tr>`;}).join(''):`<tr><td colspan="10"><div class="empty"><b>No variants yet</b>${(prod.active!==false&&can('editProducts'))?' · <span class="link" onclick="openVariantForm('+prod.id+')">Add one</span>':''}</div></td></tr>`}</tbody>
     </table></div></div></div>
   <div class="card"><div class="card-h"><h3>Movement History</h3><span class="sub">Recent stock changes for this product</span></div>
     <div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
@@ -6303,7 +6398,7 @@ function openProductForm(id){
       <div class="form-row"><label>Product Name <span class="req">*</span></label><input id="pd_name" value="${p?esc(p.name):''}"><span class="err">Enter a name</span></div>
       <div class="form-row"><label>Category <span class="req">*</span></label><input id="pd_cat" list="catlist" value="${p?esc(p.category):''}"><datalist id="catlist">${(DB.productCategories||CATEGORIES).map(c=>`<option>${esc(c)}</option>`).join('')}</datalist><span class="err">Enter a category</span></div>
       <div class="form-row"><label>Brand / Collection</label><input id="pd_brand" value="${p?esc(p.brand||''):''}"></div>
-      <div class="form-row"><label>Default Selling Price (EGP) <span class="req">*</span></label><input type="number" id="pd_price" value="${p?p.defaultPrice:''}"><span class="err">Enter a price</span></div>
+      <div class="form-row"><label>Default Selling Price (EGP) <span class="req">*</span></label><input type="number" step="0.01" id="pd_price" value="${p?p.defaultPrice:''}"><span class="err">Enter a price</span></div>
       <div class="form-row"><label>Discount Type <span class="req">*</span></label><select id="pd_dtype">${DISCOUNT_TYPES.map(dt=>`<option value="${dt}" ${(p?(p.discountType||'Basic'):'Basic')===dt?'selected':''}>${t(dt)}</option>`).join('')}</select><span class="err">Choose a discount type</span></div>
       <div class="form-row"><label>Status</label><select id="pd_active"><option value="1" ${!p||p.active?'selected':''}>Active</option><option value="0" ${p&&!p.active?'selected':''}>Inactive</option></select></div>
       <div class="form-row full"><label>Description</label><input id="pd_desc" value="${p?esc(p.description||''):''}"></div>
@@ -6355,9 +6450,9 @@ function openVariantForm(productId,variantId){
       <div class="form-row"><label>Size <span class="req">*</span></label><input id="vr_size" list="sizelist" value="${v?esc(v.size):''}"><datalist id="sizelist">${SIZES.map(c=>`<option>${c}</option>`).join('')}</datalist><span class="err">Enter a size</span></div>
       <div class="form-row"><label>Variant SKU</label><input id="vr_sku" value="${v?esc(v.sku):''}" placeholder="auto if blank"></div>
       <div class="form-row"><label>${esc(t('Barcode'))} <span class="muted" style="font-size:10px">(${esc(t('optional'))})</span></label><input id="vr_barcode" value="${v?esc(v.barcode||''):''}" placeholder="${esc(t('optional'))}"></div>
-      <div class="form-row"><label>${esc(t('Wholesale Price'))} (EGP)</label><input type="number" id="vr_price" value="${v?v.price:(prod.defaultWholesale!=null?prod.defaultWholesale:prod.defaultPrice)}"></div>
-      <div class="form-row"><label>${esc(t('Retail Price'))} (EGP)</label><input type="number" id="vr_retail" value="${v?(v.retailPrice!=null&&v.retailPrice!==''?v.retailPrice:''):(prod.defaultRetail!=null?prod.defaultRetail:'')}" placeholder="${esc(t('defaults to wholesale'))}"></div>
-      ${canViewProductCost()?`<div class="form-row"><label>${esc(t('Cost'))} (EGP) <span class="muted" style="font-size:10px">(${esc(t('optional'))})</span></label><input type="number" id="vr_cost" value="${v?(v.cost!=null&&v.cost!==''?v.cost:''):(prod.defaultCost!=null?prod.defaultCost:'')}" ${canEditProductCost()?'':'readonly title="'+esc(t('Cost is read-only for your role'))+'"'}></div>`:''}
+      <div class="form-row"><label>${esc(t('Wholesale Price'))} (EGP)</label><input type="number" step="0.01" id="vr_price" value="${v?v.price:(prod.defaultWholesale!=null?prod.defaultWholesale:prod.defaultPrice)}"></div>
+      <div class="form-row"><label>${esc(t('Retail Price'))} (EGP)</label><input type="number" step="0.01" id="vr_retail" value="${v?(v.retailPrice!=null&&v.retailPrice!==''?v.retailPrice:''):(prod.defaultRetail!=null?prod.defaultRetail:'')}" placeholder="${esc(t('defaults to wholesale'))}"></div>
+      ${canViewProductCost()?`<div class="form-row"><label>${esc(t('Cost'))} (EGP) <span class="muted" style="font-size:10px">(${esc(t('optional'))})</span></label><input type="number" step="0.01" id="vr_cost" value="${v?(v.cost!=null&&v.cost!==''?v.cost:''):(prod.defaultCost!=null?prod.defaultCost:'')}" ${canEditProductCost()?'':'readonly title="'+esc(t('Cost is read-only for your role'))+'"'}></div>`:''}
       ${v?'':`<div class="form-row"><label>Opening Stock</label><input type="number" id="vr_stock" value="0"></div>`}
       <div class="form-row"><label data-i18n="Minimum Stock">Minimum Stock</label><input type="number" id="vr_reorder" value="${v?v.reorderLevel:15}"><span class="muted" style="font-size:10px">Low-stock alerts trigger at or below this level</span></div>
       <div class="form-row"><label>Status</label><select id="vr_active"><option value="1" ${!v||v.active?'selected':''}>Active</option><option value="0" ${v&&!v.active?'selected':''}>Inactive</option></select></div>
@@ -6462,6 +6557,7 @@ function openStockAdjust(variantId){
   if(!requirePerm('adjustStock','adjust stock'))return;
   const v=variantById(variantId);
   if(!v){toast('Variant not found','Refresh the inventory list and try again','warn');return;}
+  if(!variantSelectableForNew(v)){toast(t('Archived'),t('Restore the product before recording new stock movements.'),'warn');return;}   // rev20.1 (3A): no new stock movement on an archived-parent variant
   openModal(`<div class="modal-h"><div><h3>Stock Adjustment</h3><div class="sub">${v.sku} · ${variantLabel(v)}</div></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b">
       <div class="stat-row" style="margin-bottom:14px"><div class="stat"><div class="lb">Current Stock</div><div class="vl">${v.stock}</div></div></div>
@@ -6489,7 +6585,8 @@ function openStockAdjust(variantId){
 }
 function openStockIn(variantId){
   if(!requirePerm('stockIn','record stock in'))return;
-  const opts=DB.productVariants.filter(v=>v.active).sort((a,b)=>a.sku.localeCompare(b.sku)).map(v=>`<option value="${v.id}" ${v.id===variantId?'selected':''}>${v.sku} — ${esc(variantLabel(v))} (stock ${v.stock})</option>`).join('');
+  if(variantId!=null){ const _v=variantById(variantId); if(_v&&!variantSelectableForNew(_v)){toast(t('Archived'),t('Restore the product before recording new stock movements.'),'warn');return;} }   // rev20.1 (3A)
+  const opts=DB.productVariants.filter(variantSelectableForNew).sort((a,b)=>a.sku.localeCompare(b.sku)).map(v=>`<option value="${v.id}" ${v.id===variantId?'selected':''}>${v.sku} — ${esc(variantLabel(v))} (stock ${v.stock})</option>`).join('');   // rev20.1 (3A): Stock In cannot target an archived-parent product
   openModal(`<div class="modal-h"><div><h3>Stock In</h3><div class="sub">Increase stock &amp; record a movement</div></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b"><div class="form-grid">
       <div class="form-row full"><label>Variant <span class="req">*</span></label><select id="si_var"><option value="">Select a variant…</option>${opts}</select><span class="err">Select a variant</span></div>
@@ -6497,7 +6594,7 @@ function openStockIn(variantId){
       <div class="form-row"><label>Date</label><input type="date" id="si_date" value="${dateToInput(TODAY)}" max="${dateToInput(TODAY)}">${todayChip('si_date')}</div>
       <div class="form-row"><label>Reference</label><input id="si_ref" placeholder="GRN / delivery note"></div>
       <div class="form-row"><label>Supplier (optional)</label><input id="si_supplier"></div>
-      <div class="form-row"><label>Unit Cost (optional)</label><input type="number" id="si_cost"></div>
+      <div class="form-row"><label>Unit Cost (optional)</label><input type="number" step="0.01" id="si_cost"></div>
       <div class="form-row full"><label>Notes</label><input id="si_notes"></div>
     </div>
     <div class="section-note" style="margin-top:12px">This creates a <b>Stock In</b> movement. A full purchase-order module is intentionally out of scope for now.</div></div>
@@ -6749,7 +6846,7 @@ function openStockTransferForm(){   // F10 — renamed from openTransferForm to 
 }
 function renderTrfPick(q){const box=document.getElementById('tf_pick');q=(q||'').toLowerCase();if(!q){box.innerHTML='';return;}
   const from=+document.getElementById('tf_from').value;
-  let vs=DB.productVariants.filter(v=>v.active!==false&&whStockQty(from,v.id)>0);
+  let vs=DB.productVariants.filter(v=>variantSelectableForNew(v)&&whStockQty(from,v.id)>0);   // rev20.1 (3A): a NEW stock transfer cannot pick an archived-parent product
   vs=vs.filter(v=>{const p=productById(v.productId)||{};return v.sku.toLowerCase().includes(q)||(p.name||'').toLowerCase().includes(q);}).slice(0,20);
   box.innerHTML=`<div class="card" style="margin-bottom:8px"><div class="card-b"><div class="tbl-wrap" style="max-height:180px;overflow:auto"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th class="num">At source</th><th></th></tr></thead>
     <tbody>${vs.map(v=>{const p=productById(v.productId)||{};return `<tr><td class="t-strong">${v.sku}</td><td>${esc(p.name||'')}</td><td class="num">${whStockQty(from,v.id)}</td><td><button class="btn sm primary" onclick="trfAdd(${v.id})">Add</button></td></tr>`;}).join('')||'<tr><td colspan=4><div class="empty"><b>No SKUs with source stock</b></div></td></tr>'}</tbody></table></div></div></div>`;
@@ -9084,6 +9181,8 @@ let settingsSec='commission';
 PAGES.settings=function(p){
   if(p&&p.sec)settingsSec=p.sec;
   const secs=[['commission','Commission Rules'],['bonus','Bonus Rules'],['credit','Credit Settings'],['payments','Payment Methods'],['payables','Payables / AP'],['security','Security & App Lock'],['rules','Business Rules'],['invaccess','Inventory / Warehouse Access'],['users','Users & Roles']];
+  // v3.26 (rev20) — Users & Access (real Auth users + profiles). Administrator-only AND cloud (secure) mode only.
+  try{ if((typeof isAdmin==='function'&&isAdmin())&&(typeof secureMode==='function'&&secureMode())) secs.splice(8,0,['useraccess',t('Users & Access')]); }catch(e){}
   V.innerHTML=`
   <div class="page-head"><div><h1>Settings</h1><p>Configure rules & policies — changes apply immediately to future calculations</p></div></div>
   <div class="grid" style="display:grid;grid-template-columns:210px 1fr;gap:18px">
@@ -9094,7 +9193,7 @@ PAGES.settings=function(p){
   </div>`;
   renderSettings();
 };
-function setSettings(s){settingsSec=s;renderSettings();document.querySelectorAll('.settings-nav .sitem').forEach(el=>el.classList.toggle('active',el.textContent.trim()===({commission:'Commission Rules',bonus:'Bonus Rules',credit:'Credit Settings',payments:'Payment Methods',payables:'Payables / AP',security:'Security & App Lock',rules:'Business Rules',invaccess:'Inventory / Warehouse Access',users:'Users & Roles'})[s]));}
+function setSettings(s){settingsSec=s;renderSettings();document.querySelectorAll('.settings-nav .sitem').forEach(el=>el.classList.toggle('active',el.textContent.trim()===({commission:'Commission Rules',bonus:'Bonus Rules',credit:'Credit Settings',payments:'Payment Methods',payables:'Payables / AP',security:'Security & App Lock',rules:'Business Rules',invaccess:'Inventory / Warehouse Access',useraccess:t('Users & Access'),users:'Users & Roles'})[s]));}
 function renderSettings(){
   const box=document.getElementById('settingsBody');
   if(settingsSec==='commission')box.innerHTML=renderCommissionSettings();
@@ -9105,6 +9204,7 @@ function renderSettings(){
   else if(settingsSec==='security'){box.innerHTML=renderSecuritySettings();}
   else if(settingsSec==='rules')box.innerHTML=renderBusinessRules();
   else if(settingsSec==='invaccess')box.innerHTML=renderInventoryAccessSettings();
+  else if(settingsSec==='useraccess'){ if(typeof uaRender==='function')uaRender(box); else box.innerHTML=''; }   // v3.26 (rev20) — Users & Access (async)
   else box.innerHTML=renderUserSettings();
 }
 // v3.26.1 (Scope D) — Inventory / Warehouse Access. Controls whether the Inventory-User role can VIEW / EDIT the
@@ -10853,7 +10953,7 @@ function renderCommercialPanel(){
     </div>
     ${mode==='Exceptional'?`<div class="section-note" style="font-size:11px;margin:8px 0 6px">${esc(t('One-off terms for THIS invoice only. They FREEZE on the invoice and never change the customer master. The next invoice defaults back to Normal.'))}</div>
       <div class="form-grid">
-        <div class="form-row"><label>${esc(t('Invoice Discount %'))}</label><input type="number" id="iv_exc_disc" min="0" max="100" step="0.01" value="${round2(+invEdit.excInvDiscount||0)}" oninput="invEdit.excInvDiscount=Math.max(0,+this.value||0);renderInvLines();"></div>
+        <div class="form-row"><label>${esc(t('Invoice Discount %'))}</label><input type="number" id="iv_exc_disc" min="0" max="100" step="0.01" value="${round2(+invEdit.excInvDiscount||0)}" oninput="invEdit.excInvDiscount=Math.max(0,+this.value||0);refreshCommercialViews();"></div>
         <div class="form-row"><label>${esc(t('Commission %'))}</label><input type="number" id="iv_exc_comm" min="0" max="100" step="0.01" value="${round2(+invEdit.excInvCommission||0)}" oninput="invEdit.excInvCommission=+this.value||0;"></div>
         <div class="form-row"><label>${esc(t('Bonus %'))}</label><input type="number" id="iv_exc_bonus" min="-100" max="100" step="0.01" value="${round2(+invEdit.excInvBonus||0)}" oninput="invEdit.excInvBonus=+this.value||0;"></div>
         <div class="form-row full"><label>${esc(t('Internal Reason / Terms Note'))}</label><input id="iv_exc_note" value="${esc(invEdit.excInvNote||'')}" oninput="invEdit.excInvNote=this.value;"></div>
@@ -10863,7 +10963,12 @@ function renderCommercialPanel(){
 function ivSetCommercialMode(m){
   invEdit.commercialMode=(m==='Exceptional')?'Exceptional':'Normal';
   invEdit.commercialSource=(invEdit.commercialMode==='Exceptional')?'Exceptional Invoice':'Normal';
-  renderCommercialPanel(); renderInvLines();
+  // rev20.4 (Scope D · D2) — on a Normal↔Exceptional switch, refresh the Commercial panel AND the Additional-Discount
+  // panel/badge, the Customer-Basic-Info line, and the lines/totals, so no stale Normal base remains on screen.
+  renderCommercialPanel();
+  if(typeof renderExcPanel==='function')renderExcPanel();
+  if(typeof renderCustBasicInfo==='function')renderCustBasicInfo();
+  renderInvLines();
 }
 // v3.1 Change 1 — route the Administrator "Edit Invoice" action from Invoice Details.
 function adminEditInvoice(id){
@@ -10893,23 +10998,38 @@ function renderCustBasicInfo(){
   const box=document.getElementById('iv_custinfo');if(!box)return;
   const c=custById(invEdit.customerId);
   if(!c){box.innerHTML='Select a customer — their Basic Discount applies to Basic-type lines.';box.style.color='';return;}
+  // rev20.4 (Scope D · D3) — do NOT claim the Normal customer discount applies while the invoice policy is Exceptional.
+  // Show the ACTIVE base that is really used on Basic lines; mark the Normal master discount as inactive-for-this-invoice.
+  if(invEdit&&invEdit.commercialMode==='Exceptional'){
+    const activeLbl=(invEdit.commercialSource==='Exceptional Customer')?t('Exceptional Customer Discount'):t('Exceptional Invoice Discount');
+    const activePct=round2(activeCommercialBasePct());
+    box.innerHTML=`&#9733; <b>${esc(activeLbl)}</b>: <b>${activePct}%</b> <span class="muted">(${esc(t('active on Basic lines for this invoice'))})</span> · <span class="muted" style="font-size:11px">${esc(t('Normal customer discount'))} ${esc(String(c.discountPercent))}% — ${esc(t('inactive for this invoice'))}</span>`;
+    return;
+  }
   const ok=basicDiscountValid(+c.discountPercent);
   box.innerHTML=`Customer <b>Basic Discount</b>: <b>${c.discountPercent}%</b> ${ok?'(applies automatically to Basic lines)':`— <span style="color:var(--red)">not a valid percentage (1–100%); Basic lines can't be confirmed until fixed</span>`}`;
 }
 function toggleInvPicker(){const p=document.getElementById('iv_picker');p.style.display=p.style.display==='none'?'':'none';if(p.style.display!=='none'){renderInvPicker('');}}
 function renderInvPicker(q){
-  const p=document.getElementById('iv_picker');q=(q||'').toLowerCase();
-  let vs=DB.productVariants.filter(v=>v.active);
-  if(q)vs=vs.filter(v=>{const pr=productById(v.productId)||{};return v.sku.toLowerCase().includes(q)||(pr.name||'').toLowerCase().includes(q)||(pr.code||'').toLowerCase().includes(q)||v.color.toLowerCase().includes(q)||v.size.toLowerCase().includes(q);});
+  // rev20.4 (Scope C) — keep the RAW query in the input (never render the lowercased/transformed text back, or Arabic
+  // and numbers reverse); match on a lowercased COPY only. Rerender is caret-safe via srchKeepCaret so typing one
+  // character at a time never resets the caret to 0.
+  const p=document.getElementById('iv_picker');
+  const rawQuery=(q==null?'':String(q));
+  const matchQuery=rawQuery.toLowerCase();
+  let vs=DB.productVariants.filter(variantSelectableForNew);   // rev20.1 (3A): a NEW invoice line can never pick an archived-parent product
+  if(matchQuery)vs=vs.filter(v=>{const pr=productById(v.productId)||{};return v.sku.toLowerCase().includes(matchQuery)||(pr.name||'').toLowerCase().includes(matchQuery)||(pr.code||'').toLowerCase().includes(matchQuery)||v.color.toLowerCase().includes(matchQuery)||v.size.toLowerCase().includes(matchQuery);});
   vs=vs.slice(0,30);
   p.innerHTML=`<div class="card" style="margin-bottom:10px"><div class="card-b">
-    <input class="inp" id="iv_pick_search" dir="auto" placeholder="Search product name, code, SKU, color, size..." value="${esc(q)}" style="width:100%;margin-bottom:8px">
+    <input class="inp" id="iv_pick_search" dir="auto" placeholder="Search product name, code, SKU, color, size..." value="${esc(rawQuery)}" style="width:100%;margin-bottom:8px">
     <div class="tbl-wrap" style="max-height:220px;overflow:auto"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th>Type</th><th>Color</th><th>Size</th><th class="num">Stock</th><th class="num">Price</th><th></th></tr></thead>
     <tbody>${vs.length?vs.map(v=>{const pr=productById(v.productId)||{};const st=variantStatus(v);return `<tr><td class="t-strong">${v.sku}</td><td>${esc(pr.name||'')}</td><td>${dtypeBadge(discountTypeOf(v.productId))}</td><td>${v.color}</td><td>${v.size}</td>
       <td class="num ${st==='out'?'neg':''}">${v.stock}</td><td class="num">${egp0(v.price)}</td>
       <td><button class="btn sm primary" onclick="addInvLine(${v.id})">Add</button></td></tr>`;}).join(''):`<tr><td colspan="8"><div class="empty"><b>No variants</b></div></td></tr>`}</tbody></table></div>
   </div></div>`;
-  const s=document.getElementById('iv_pick_search');s.oninput=e=>renderInvPicker(e.target.value);s.focus();
+  const s=document.getElementById('iv_pick_search');
+  s.oninput=function(){ const val=this.value; srchKeepCaret('iv_pick_search', ()=>renderInvPicker(val)); };
+  s.focus();   // initial focus; on rerender srchKeepCaret restores the exact caret position afterwards
 }
 function addInvLine(variantId){
   const v=variantById(variantId);if(!v)return;const existing=invEdit.lines.find(l=>l.variantId===variantId);
@@ -10987,7 +11107,7 @@ function renderInvLines(){
       else {commCell=`<span class="badge b-blue">Normal 2%</span><div style="font-size:10px;margin-top:3px" class="muted">+ optional Custom %: <input class="matrix-inp" style="width:50px" type="number" min="0" placeholder="none" value="${l.customCommPct}" oninput="updLine(${idx},'customCommPct',this.value)"></div><div style="font-size:10px" class="muted">blank = none (normal 2% still applies)</div>`;}
       return `<tr><td><b>${l.sku}</b> ${dtypeBadge(l.discountType)}<br><small class="muted">${esc((productById(l.productId)||{}).name||'')} · ${l.color}/${l.size}</small><div id="ln_av_${idx}" style="font-size:11px">${v&&l.qty>v.stock&&!DB.ruleFlags.allowNegativeStock?`<span style="color:var(--red)">only ${v.stock} in stock</span>`:`<span class="muted">${v?v.stock:0} in stock</span>`}</div></td>
       <td><input class="matrix-inp" style="width:56px" type="number" min="1" value="${l.qty}" oninput="updLine(${idx},'qty',this.value)"></td>
-      <td class="num"><input class="matrix-inp" type="number" value="${l.unitPrice}" oninput="updLine(${idx},'unitPrice',this.value)">
+      <td class="num"><input class="matrix-inp" type="number" step="0.01" value="${l.unitPrice}" oninput="updLine(${idx},'unitPrice',this.value)">
         <select class="matrix-inp" style="width:96px;margin-top:3px;font-size:10px" onchange="setLinePriceType(${idx},this.value)"><option value="wholesale" ${(l.priceType||'wholesale')==='wholesale'?'selected':''}>${esc(t('Wholesale'))}</option><option value="retail" ${l.priceType==='retail'?'selected':''}>${esc(t('Retail'))}</option><option value="custom" ${l.priceType==='custom'?'selected':''}>${esc(t('Custom'))}</option></select>
         ${v?`<div class="muted" style="font-size:9px">W ${egp0(vWholesale(v))} · R ${egp0(vRetail(v))}</div>`:''}</td>
       <td>${discCell}<div id="ln_da_${idx}" style="font-size:10px" class="muted">− ${egp0(c.discAmt)}</div></td>
@@ -12475,10 +12595,10 @@ Object.assign(TMAP,{
   // v3.26 (rev7) — Customer Discount / Settlement (خصم / تسوية): a STANDALONE, non-cash AR CREDIT. Date + Amount +
   // Reason + status. Actor/timestamps + reverse reason ride in the row / data jsonb. Allocations are a narrowly
   // scoped child table persisted by migration 07's RPC (for durable attribution + exact reversal).
-  customer_settlements:{to:x=>({id:x.id,customer_id:x.customerId,salesperson_id:x.salespersonId||null,amount:+x.amount||0,date:x.date||null,reason:x.reason||'',status:x.status||'Active',reference:x.reference||('STL-'+x.id),
+  customer_settlements:{to:x=>({id:x.id,customer_id:x.customerId,salesperson_id:x.salespersonId||null,amount:+x.amount||0,direction:(x.direction==='Debit'?'Debit':'Credit'),date:x.date||null,reason:x.reason||'',status:x.status||'Active',reference:x.reference||('STL-'+x.id),
       data:{reverseReason:x.reverseReason||'',notes:x.notes||''},
       created_by:x.createdBy||'',created_by_id:x.createdById||'',created_at:x.createdAt||'',reversed_by:x.reversedBy||'',reversed_by_id:x.reversedById||'',reversed_at:x.reversedAt||''}),
-    from:r=>{const d=r.data||{};return {id:r.id,customerId:r.customer_id,salespersonId:r.salesperson_id||null,amount:+r.amount||0,date:r.date||'',reason:r.reason||'',status:r.status||'Active',reference:r.reference||('STL-'+r.id),
+    from:r=>{const d=r.data||{};return {id:r.id,customerId:r.customer_id,salespersonId:r.salesperson_id||null,amount:+r.amount||0,direction:(r.direction==='Debit'?'Debit':'Credit'),date:r.date||'',reason:r.reason||'',status:r.status||'Active',reference:r.reference||('STL-'+r.id),
       reversedBy:r.reversed_by||'',reversedById:r.reversed_by_id||'',reversedAt:r.reversed_at||'',reverseReason:d.reverseReason||'',createdBy:r.created_by||'',createdById:r.created_by_id||'',createdAt:r.created_at||'',notes:d.notes||''};}},
   customer_settlement_allocations:{to:a=>({id:a.id,settlement_id:a.settlementId,invoice_id:a.invoiceId,amount:+a.allocatedAmount||0}),
     from:r=>({id:r.id,settlementId:r.settlement_id,invoiceId:r.invoice_id,allocatedAmount:+r.amount||0})},
@@ -12791,6 +12911,16 @@ async function loadHRTables(){
       (DB.employees||[]).forEach(e=>{ const c=byId[e.id]; if(c){e.baseSalary=c.baseSalary;e.salaryBasis=c.salaryBasis;e.allowancesTotal=c.allowancesTotal;e.allowances=c.allowances;} });
     } }catch(e){}
 }
+// rev20.2 (1A–1C) — build the (products, variants) read pair for a load/sync given effective Catalog access.
+//  • other roles                : both best-effort (unchanged legacy behavior)
+//  • Inventory User, Catalog ON  : both STRICT (rev19/19.1 — a failure fails the load closed; never [] a good catalog)
+//  • Inventory User, Catalog OFF : products best-effort (RLS returns 0 rows), variants NOT fetched (iw_catalog_variants
+//                                  would intentionally reject) → resolves []. This is a valid access state, not an error.
+function iwCatalogReadPair(iw, iwCatalog){
+  if(iw && iwCatalog) return [sbGet('products'), sbGetVariants()];
+  if(iw && !iwCatalog) return [sbGet('products').catch(()=>[]), Promise.resolve([])];
+  return [sbGet('products').catch(()=>[]), sbGetVariants().catch(()=>[])];
+}
 async function secureLoad(){
   const c=getCloud();
   await ensureFreshToken();
@@ -12807,18 +12937,29 @@ async function secureLoad(){
   // CLOSED — DB.products / DB.productVariants are left untouched, the cloud status goes to error, and a Retry message
   // is shown. Other roles keep the prior behavior exactly.
   const _iw=isInventoryUserSecure();
+  // rev20.2 (1A/1C) — for a secure Inventory User, load the authoritative section-access map FIRST, then decide which
+  // inventory datasets are required. A first-load failure fails the whole secure load CLOSED (no demo/stale fallback).
+  // Catalog OFF is a valid access state (not a cloud error): the catalog reads the server would reject are skipped and
+  // DB.products/DB.productVariants are cleared to [] below (no stale/demo catalog retained).
+  let _iwCatalog=true;
+  if(_iw){
+    const _saOk=await loadMySectionAccess();
+    if(_saOk===false){ try{setCloudStatus('error','access map load failed');}catch(_){} try{toast(t('Access could not be loaded'),t('Cannot load your access right now — press Retry.'),'err');}catch(_){} return false; }
+    _iwCatalog=sectionEnabled('catalog');
+  }
+  const _catReads=iwCatalogReadPair(_iw,_iwCatalog);
   let _rows;
   try{
     _rows=await Promise.all([
       sbGet('salespersons'),sbGet('customers'),sbGet('invoices'),sbGet('collections'),sbGet('commission_rules'),sbGet('bonus_rules'),
-      (_iw?sbGet('products'):sbGet('products').catch(()=>[])),(_iw?sbGetVariants():sbGetVariants().catch(()=>[])),sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
+      _catReads[0],_catReads[1],sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
       sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[])]);
   }catch(e){
     if(_iw){ try{setCloudStatus('error',(e&&e.message)||'catalog read failed');}catch(_){} try{toast(t('Catalog read failed'),t('Cannot load the catalog right now — press Retry Refresh.'),'err');}catch(_){} return false; }   // fail CLOSED: DB.products / DB.productVariants untouched
     throw e;
   }
   const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd]=_rows;
-  if(_iw&&(!Array.isArray(pr)||!Array.isArray(pv))){ try{setCloudStatus('error','catalog read returned no data');}catch(_){} try{toast(t('Catalog read failed'),t('Cannot load the catalog right now — press Retry Refresh.'),'err');}catch(_){} return false; }
+  if(_iw&&_iwCatalog&&(!Array.isArray(pr)||!Array.isArray(pv))){ try{setCloudStatus('error','catalog read returned no data');}catch(_){} try{toast(t('Catalog read failed'),t('Cannot load the catalog right now — press Retry Refresh.'),'err');}catch(_){} return false; }
   DB.salespersons=sp.map(TMAP.salespersons.from);
   DB.customers=cu.map(TMAP.customers.from);
   DB.invoices=iv.map(TMAP.invoices.from);
@@ -12943,15 +13084,21 @@ async function secureSyncTick(){
   // fails, KEEP the previous DB.products / DB.productVariants (never overwrite a good catalog with []), flag the
   // cloud status as error, and skip this tick. A later successful tick replaces it normally.
   const _iw=isInventoryUserSecure();
+  // rev20.2 (1E) — refresh the authoritative access map BEFORE deciding which inventory datasets to fetch, so a live
+  // Catalog ON→OFF stops the strict catalog reads (no permanent cloud-error loop) and an OFF→ON only exposes the
+  // catalog after a fresh STRICT products+variants load succeeds. A refresh failure keeps the last-known map.
+  let _iwCatalog=true;
+  if(_iw){ try{ await loadMySectionAccess(); }catch(_){} _iwCatalog=sectionEnabled('catalog'); }
+  const _catReads=iwCatalogReadPair(_iw,_iwCatalog);
   try{
     rows=await Promise.all([
       sbGet('salespersons'),sbGet('customers'),sbGet('invoices'),sbGet('collections'),sbGet('commission_rules'),sbGet('bonus_rules'),
-      (_iw?sbGet('products'):sbGet('products').catch(()=>[])),(_iw?sbGetVariants():sbGetVariants().catch(()=>[])),sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
+      _catReads[0],_catReads[1],sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
       sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[])]);
-  }catch(e){ setCloudStatus('error',e.message); return; }   // IU: strict products/variants rejected → previous catalog kept, tick skipped
+  }catch(e){ setCloudStatus('error',e.message); return; }   // IU with Catalog ON: strict products/variants rejected → previous catalog kept, tick skipped
   await loadInvAccess();   // v3.26.1 (Scope D) — refresh the Inventory User's cost toggles so an Admin change resolves on the next poll (never stale)
   const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd]=rows;
-  if(_iw&&(!Array.isArray(pr)||!Array.isArray(pv))){ setCloudStatus('error','catalog read returned no data'); return; }   // keep the previous catalog; never becomes 0
+  if(_iw&&_iwCatalog&&(!Array.isArray(pr)||!Array.isArray(pv))){ setCloudStatus('error','catalog read returned no data'); return; }   // Catalog ON: keep the previous catalog; never becomes 0
   const inc={salespersons:sp.map(TMAP.salespersons.from),customers:cu.map(TMAP.customers.from),invoices:iv.map(TMAP.invoices.from),
     collections:co.map(TMAP.collections.from),
     commissionRules:cr.length?cr.map(TMAP.commission_rules.from):DB.commissionRules,
@@ -18302,8 +18449,8 @@ PAGES.pgen=function(){
         <td><input class="matrix-inp" style="width:150px" value="${esc(r.sku)}" oninput="pgSetCell(${i},'sku',this.value)"></td>
         <td><input class="matrix-inp" style="width:110px" value="${esc(r.barcode||'')}" placeholder="${esc(t('optional'))}" oninput="pgSetCell(${i},'barcode',this.value)"></td>
         <td><input class="matrix-inp" style="width:70px" type="number" value="${r.cost}" oninput="pgSetCell(${i},'cost',this.value)"></td>
-        <td><input class="matrix-inp" style="width:70px" type="number" value="${r.wholesale}" oninput="pgSetCell(${i},'wholesale',this.value)"></td>
-        <td><input class="matrix-inp" style="width:70px" type="number" value="${r.retail}" placeholder="=${esc(t('WS'))}" oninput="pgSetCell(${i},'retail',this.value)"></td>
+        <td><input class="matrix-inp" style="width:70px" type="number" step="0.01" value="${r.wholesale}" oninput="pgSetCell(${i},'wholesale',this.value)"></td>
+        <td><input class="matrix-inp" style="width:70px" type="number" step="0.01" value="${r.retail}" placeholder="=${esc(t('WS'))}" oninput="pgSetCell(${i},'retail',this.value)"></td>
         <td><input class="matrix-inp" style="width:64px" type="number" value="${r.openQty}" oninput="pgSetCell(${i},'openQty',this.value)"></td></tr>`).join('');
     const nMake=_pg.rows.filter(r=>!r.exists).length;
     grid=`<div class="card row-gap"><div class="card-h"><h3>${esc(t('Variant Preview'))}</h3><span class="sub">${nMake} ${esc(t('new SKUs'))} · ${_pg.rows.length-nMake} ${esc(t('existing'))}</span></div>
@@ -18320,8 +18467,8 @@ PAGES.pgen=function(){
     <div class="form-row"><label>${esc(t('Discount Type'))}</label><select id="pg_discountType">${DISCOUNT_TYPES.map(dt=>`<option value="${dt}" ${(_pg.discountType||'Basic')===dt?'selected':''}>${t(dt)}</option>`).join('')}</select></div>
     <div class="form-row"><label>${esc(t('Default Warehouse'))}</label><select id="pg_wh">${(DB.warehouses||[]).filter(w=>w.active!==false).map(w=>`<option value="${w.id}" ${(_pg.warehouseId||mainWarehouseId())===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
     ${canViewProductCost()?`<div class="form-row"><label>${esc(t('Default Cost'))}</label><input id="pg_cost" type="number" value="${_pg.cost}" ${canEditProductCost()?'':'readonly title="'+esc(t('Cost is read-only for your role'))+'"'}></div>`:''}
-    <div class="form-row"><label>${esc(t('Default Wholesale Price'))}</label><input id="pg_wholesale" type="number" value="${_pg.wholesale}"></div>
-    <div class="form-row"><label>${esc(t('Default Retail Price'))}</label><input id="pg_retail" type="number" value="${_pg.retail}"></div>
+    <div class="form-row"><label>${esc(t('Default Wholesale Price'))}</label><input id="pg_wholesale" type="number" step="0.01" value="${_pg.wholesale}"></div>
+    <div class="form-row"><label>${esc(t('Default Retail Price'))}</label><input id="pg_retail" type="number" step="0.01" value="${_pg.retail}"></div>
     <div class="form-row"><label>${esc(t('Default Reorder Level'))}</label><input id="pg_reorder" type="number" value="${_pg.reorder}"></div>
   </div>
   <h4 style="margin:12px 0 4px">${esc(t('Sizes'))} ${_pg.mode==='missing'?'<span class="muted" style="font-weight:400;font-size:11px">('+esc(t('add new sizes — existing ones are skipped'))+')</span>':''}</h4>
@@ -18349,8 +18496,8 @@ function duplicateVariant(variantId){
       <div class="form-row"><label>${esc(t('Size'))}</label><input id="dv_size" value="${esc(String(src.size||''))}"></div>
       <div class="form-row"><label>${esc(t('SKU'))}</label><input id="dv_sku" placeholder="${esc(t('auto if blank'))}"></div>
       <div class="form-row"><label>${esc(t('Barcode'))}</label><input id="dv_barcode" placeholder="${esc(t('optional'))}"></div>
-      <div class="form-row"><label>${esc(t('Wholesale Price'))}</label><input id="dv_ws" type="number" value="${src.price}"></div>
-      <div class="form-row"><label>${esc(t('Retail Price'))}</label><input id="dv_rt" type="number" value="${src.retailPrice!=null&&src.retailPrice!==''?src.retailPrice:''}" placeholder="=${esc(t('WS'))}"></div>
+      <div class="form-row"><label>${esc(t('Wholesale Price'))}</label><input id="dv_ws" type="number" step="0.01" value="${src.price}"></div>
+      <div class="form-row"><label>${esc(t('Retail Price'))}</label><input id="dv_rt" type="number" step="0.01" value="${src.retailPrice!=null&&src.retailPrice!==''?src.retailPrice:''}" placeholder="=${esc(t('WS'))}"></div>
       <div class="form-row"><label>${esc(t('Cost'))}</label><input id="dv_cost" type="number" value="${src.cost!=null&&src.cost!==''?src.cost:''}"></div>
       <div class="form-row"><label>${esc(t('Opening Stock'))}</label><input id="dv_open" type="number" value="0"></div>
     </div></div>
@@ -18376,7 +18523,7 @@ function openBulkPrice(){ if(!requirePerm('editProducts','edit prices'))return; 
 function bpeBuild(){
   ['mode','value','catFilter'].forEach(f=>{const el=document.getElementById('bpe_'+f); if(el)_bpe[f]=el.value;});
   const val=+_bpe.value; if(!(isFinite(val))){toast(t('Enter an amount'),'','warn');return;}
-  const vs=(DB.productVariants||[]).filter(v=>v.active!==false).filter(v=>{ if(!_bpe.catFilter)return true; const p=productById(v.productId); return p&&String(p.category||'').toLowerCase()===_bpe.catFilter.toLowerCase(); });
+  const vs=(DB.productVariants||[]).filter(variantSelectableForNew).filter(v=>{ if(!_bpe.catFilter)return true; const p=productById(v.productId); return p&&String(p.category||'').toLowerCase()===_bpe.catFilter.toLowerCase(); });   // rev20.2 (2A): exclude archived-parent variants from Bulk Price Edit (a NEW operation)
   _bpe.rows=vs.map(v=>{ const p=productById(v.productId); let nw=v.price,nr=vRetail(v);
     if(_bpe.mode==='setWholesale')nw=val; else if(_bpe.mode==='setRetail')nr=val;
     else if(_bpe.mode==='incWholesale')nw=round2((+v.price||0)+val); else if(_bpe.mode==='incRetail')nr=round2(vRetail(v)+val);
@@ -18425,7 +18572,7 @@ PAGES.bulkprice=function(){
     <div class="ph-actions"><button class="btn" onclick="go('inventory')">&#8592; ${esc(t('Inventory'))}</button></div></div>
   <div class="card row-gap"><div class="card-b"><div class="form-grid">
     <div class="form-row"><label>${esc(t('Operation'))}</label><select id="bpe_mode">${modes.map(m=>`<option value="${m[0]}" ${_bpe.mode===m[0]?'selected':''}>${esc(m[1])}</option>`).join('')}</select></div>
-    <div class="form-row"><label>${esc(t('Amount'))} (EGP)</label><input id="bpe_value" type="number" value="${_bpe.value}"></div>
+    <div class="form-row"><label>${esc(t('Amount'))} (EGP)</label><input id="bpe_value" type="number" step="0.01" value="${_bpe.value}"></div>
     <div class="form-row"><label>${esc(t('Category filter'))}</label><input id="bpe_catFilter" list="catlist" value="${esc(_bpe.catFilter)}" placeholder="${esc(t('all categories'))}"><datalist id="catlist">${(DB.productCategories||[]).map(c=>`<option>${esc(c)}</option>`).join('')}</datalist></div>
   </div><div style="margin-top:10px"><button class="btn primary" onclick="bpeBuild()">${esc(t('Preview'))} &#8594;</button></div></div></div>
   ${preview}`;
@@ -18517,6 +18664,11 @@ function fiComputePreview(){
       }
       if(barcode){ const bl=barcode.toLowerCase(); if(fileBar[bl]||barcodeExists(barcode,existing?existing.id:null)){flags.push('Duplicate Barcode'); if(action==='Import'){action='Skip';status='Duplicate Barcode';}} else fileBar[bl]=1; }
       if(flags.some(f=>f==='Invalid Price'||f==='Invalid Quantity')&&action==='Import'){ status='Needs Review'; }
+      // rev20.2 (2B): a bulk import must NEVER match an ARCHIVED parent as an operational existing parent — do not
+      // auto-restore, do not create/update under it, do not update an existing SKU whose parent is archived. Mark the
+      // row Archived Parent / skip; the user must explicitly Restore the product first.
+      const _effParent = existing ? productById(existing.productId) : parentProd;
+      if(_effParent && _effParent.active===false){ status='Archived Parent'; action='Skip'; if(flags.indexOf('Archived Parent')<0)flags.push('Archived Parent'); }
       out.push({i:out.length,ri,parentName,parentKey,parentProd:parentProd?parentProd.id:null,name:parentName,sku:assignedSku,color,size,category,barcode,
         cost,ws,rt,oq,reorder:re,wh,notes,status,action,flags,existingId:existing?existing.id:null});
     });
@@ -18953,15 +19105,31 @@ PAGES.rawimport=function(){
 function excReasons(){ return (DB.discountExceptionReasons&&DB.discountExceptionReasons.length)?DB.discountExceptionReasons:['Promotion','Seasonal Offer','Clearance','Management Decision','Special Customer Deal','Other']; }
 
 // the effective-discount badge shown live in the editor
+// rev20.4 (Scope D · D1) — the badge must use the ACTIVE commercial base (activeCommercialBasePct: the Normal customer
+// discount, OR the frozen Exceptional-Customer / one-off Exceptional-Invoice discount when the policy is Exceptional),
+// NEVER the inactive Normal customer discount. So an Exceptional Invoice at 40% + Additional 10% shows 40 + 10 = 50.
 function excBadgeInline(){
-  const cust=custById(invEdit.customerId); const basePct=cust?(+cust.discountPercent||0):0;
-  const on=!!invEdit.exceptionOn; const extra=on?Math.max(0,+((invEdit.extraDiscount)||0)):0; const eff=round2(basePct+extra);
-  if(on&&extra>0) return `<span class="badge b-amber" style="font-size:12px">&#9733; ${esc(t('SPECIAL DISCOUNT'))} — ${esc(t('Base'))} ${round2(basePct)}% + ${esc(t('Extra'))} ${round2(extra)}% = ${esc(t('Effective'))} ${eff}%</span>`;
-  return `<span class="badge b-slate">${esc(t('Standard pricing'))} — ${esc(t('Base'))} ${round2(basePct)}%${cust?'':' ('+esc(t('select a customer'))+')'}</span>`;
+  const cust=custById(invEdit&&invEdit.customerId);
+  const basePct=round2(activeCommercialBasePct());
+  const _excMode=!!(invEdit&&invEdit.commercialMode==='Exceptional');
+  const baseLbl=_excMode?(invEdit.commercialSource==='Exceptional Customer'?t('Exceptional Customer Base'):t('Exceptional Invoice Base')):t('Base');
+  const on=!!(invEdit&&invEdit.exceptionOn); const extra=on?Math.max(0,+((invEdit.extraDiscount)||0)):0; const eff=round2(basePct+extra);
+  if(on&&extra>0) return `<span class="badge b-amber" style="font-size:12px">&#9733; ${esc(t('SPECIAL DISCOUNT'))} — ${esc(baseLbl)} ${basePct}% + ${esc(t('Extra'))} ${round2(extra)}% = ${esc(t('Effective'))} ${eff}%</span>`;
+  return `<span class="badge b-slate">${esc(t('Standard pricing'))} — ${esc(baseLbl)} ${basePct}%${cust?'':' ('+esc(t('select a customer'))+')'}</span>`;
 }
 
 // recompute panel + lines + totals together
 function excRefresh(){ if(typeof renderExcPanel==='function')renderExcPanel(); if(typeof renderInvLines==='function')renderInvLines(); }
+
+// rev20.4 (Scope D · D2) — refresh every current-editor view that depends on the active commercial base / additional
+// discount WITHOUT rebuilding the Commercial-Policy inputs (so a number field keeps focus/caret while typing): the
+// orange Additional-Discount badge, the invoice lines + totals, the Customer-Basic-Info line, and an open preview.
+function refreshCommercialViews(){
+  try{ const b=document.getElementById('exc_badge'); if(b)b.innerHTML=excBadgeInline(); }catch(e){}
+  try{ if(typeof renderInvLines==='function')renderInvLines(); }catch(e){}   // renderInvLines() also renders totals
+  try{ if(typeof renderCustBasicInfo==='function')renderCustBasicInfo(); }catch(e){}
+  try{ const pa=document.getElementById('exc_extra_area'); if(pa&&invEdit&&invEdit._showPreview)pa.innerHTML=excPreviewHTML()+(invEdit._copyBox?excCopyBoxHTML():''); }catch(e){}
+}
 
 // the editor panel (rendered into #iv_exc)
 function renderExcPanel(){
@@ -25891,7 +26059,7 @@ function openPrelimForm(id){
         lines:p?prelimLines(p.id).map(l=>{ const dt=l.discountType||discountTypeOf(l.productId); return {productId:l.productId,variantId:l.variantId,sku:l.sku,color:l.color,size:l.size,qty:l.qty,unitPrice:l.unitPrice,discountType:dt,customPct:(dt==='Custom'?(l.baseDiscountPercent!=null?l.baseDiscountPercent:''):'')}; }):[] };
   const custList=(sp!=null?repCustomers(sp):(DB.customers||[])).filter(c=>c.salespersonId!=null);
   const custOpts=custList.map(c=>`<option value="${c.id}" ${_pd.customerId===c.id?'selected':''}>${E(c.name)}${c.code?(' · '+E(c.code)):''}</option>`).join('');
-  const varOpts=(DB.productVariants||[]).map(v=>`<option value="${v.id}">${E(variantLabel(v))}${v.sku?(' · '+E(v.sku)):''}</option>`).join('');
+  const varOpts=(DB.productVariants||[]).filter(variantSelectableForNew).map(v=>`<option value="${v.id}">${E(variantLabel(v))}${v.sku?(' · '+E(v.sku)):''}</option>`).join('');   // rev20.1 (3A): exclude archived-parent + inactive variants from a NEW preliminary invoice
   const allowDisc=repSettings().discount==='Allow';
   const reasons=(DB.discountExceptionReasons||[]);
   openModal(`
@@ -26404,6 +26572,16 @@ if(typeof I18N!=='undefined'&&I18N.ar){Object.assign(I18N.ar,{
  "Setting":"الإعداد","Rep workspace policy — stored in app_settings.data.repSettings":"سياسة مساحة المندوب — تُحفظ في app_settings.data.repSettings"
 });}
 
+/* rev20.4 (Scope D) — Arabic for the mode-aware active-commercial-base strings used by the Additional-Discount badge
+   and the Customer-Basic-Info line, so an Exceptional invoice never claims the (inactive) Normal customer discount. */
+if(typeof I18N!=='undefined'&&I18N.ar){Object.assign(I18N.ar,{
+ "Exceptional Customer Discount":"الخصم الاستثنائي للعميل",
+ "Exceptional Invoice Discount":"الخصم الاستثنائي للفاتورة",
+ "active on Basic lines for this invoice":"مفعّل على الأصناف الأساسية لهذه الفاتورة",
+ "Normal customer discount":"خصم العميل العادي",
+ "inactive for this invoice":"غير مفعّل لهذه الفاتورة"
+});}
+
 /*──────────────────────── EXPOSE ────────────────────────*/
 // Safety: if an approver CANCELS the posting/conversion modal, drop the pending link so a later, unrelated
 // save can never inherit a stale link. (On a SUCCESSFUL save the link is consumed by the success hook BEFORE
@@ -26418,6 +26596,348 @@ window.SR={ _awaitConvert:null, _awaitPost:null, _stockCache:{}, _meId:srMeId, _
 })();
 /*═══════════════ END v3.25 SALES REPRESENTATIVE WORKSPACE MODULE ═══════════════*/
 
+
+/*═══════════════ v3.26 (rev20) PRODUCT LIFECYCLE — Scope B (Archive · Restore · Safe permanent Delete) ═══════════════
+ * Server-first: in cloud (secure) mode every action goes through a trusted definer RPC (migration 12) and the catalog
+ * is then re-read authoritatively (iwCatalogReload). In local/demo mode it applies locally with the SAME safety rule:
+ * a product/variant may be permanently deleted ONLY when it is TRULY UNUSED (zero stock AND no history/reference).
+ * There is NO force-delete and history is never cascaded. The server RE-CHECKS eligibility inside its own transaction,
+ * so the client eligibility read is advisory (UX only) — the delete RPC is authoritative and atomic.
+ */
+(function(){
+  // rev20.1 (2E): client agrees with the server — Administrator, or an Inventory User whose Catalog section is ON.
+  // sectionEnabled() returns true for every non-Inventory role, so this only narrows the Inventory User.
+  function canLifecycle(){ try{ return (typeof can==='function' && can('editProducts')) && (typeof sectionEnabled!=='function' || sectionEnabled('catalog')); }catch(e){ return false; } }
+  function afterCatalogChange(){ try{ if(typeof persist==='function')persist(); }catch(e){} try{ if(typeof renderView==='function')renderView(); }catch(e){} }
+  function sec(){ try{ return typeof secureMode==='function' && secureMode(); }catch(e){ return false; } }
+
+  // LOCAL (demo) eligibility — mirrors the server's dynamic scan: any invoice line / return line / inventory movement
+  // referencing the product or its variants is HISTORY; any non-zero company or warehouse stock is STOCK. Either blocks.
+  function localProductEligibility(pid){
+    const vs=variantsOf(pid).map(v=>+v.id);
+    const inV=(id)=>vs.indexOf(+id)>=0;
+    let hasStock = variantsOf(pid).some(v=>Math.abs(+v.stock||0)>0.0001)
+      || (DB.warehouseStock||[]).some(w=>inV(w.variantId)&&Math.abs(+w.qty||0)>0.0001);
+    const blockers=[];
+    if((DB.invoiceLines||[]).some(l=>inV(l.variantId)))blockers.push('invoice_lines');
+    if((DB.inventoryMovements||[]).some(m=>inV(m.variantId)||+m.productId===+pid))blockers.push('inventory_movements');
+    if((DB.returnLines||[]).some(l=>inV(l.variantId)))blockers.push('return_lines');
+    if((DB.stockTransfers||[]).some(tr=>(tr.lines||[]).some(l=>inV(l.variantId))))blockers.push('stock_transfers');
+    if((DB.stockBatches||[]).some(b=>inV(b.variantId)))blockers.push('stock_batches');
+    const hasHistory=blockers.length>0;
+    return {can_delete:(!hasStock&&!hasHistory),has_stock:hasStock,has_history:hasHistory,blockers,
+      reason:(hasStock&&hasHistory)?'has stock and business/inventory history':(hasStock?'has stock':(hasHistory?'has business/inventory history':'no stock and no business history'))};
+  }
+  function localVariantEligibility(vid){
+    const v=(DB.productVariants||[]).find(x=>+x.id===+vid); if(!v)return {can_delete:false,reason:'variant not found'};
+    let hasStock=Math.abs(+v.stock||0)>0.0001 || (DB.warehouseStock||[]).some(w=>+w.variantId===+vid&&Math.abs(+w.qty||0)>0.0001);
+    const blockers=[];
+    if((DB.invoiceLines||[]).some(l=>+l.variantId===+vid))blockers.push('invoice_lines');
+    if((DB.inventoryMovements||[]).some(m=>+m.variantId===+vid))blockers.push('inventory_movements');
+    if((DB.returnLines||[]).some(l=>+l.variantId===+vid))blockers.push('return_lines');
+    if((DB.stockTransfers||[]).some(tr=>(tr.lines||[]).some(l=>+l.variantId===+vid)))blockers.push('stock_transfers');
+    if((DB.stockBatches||[]).some(b=>+b.variantId===+vid))blockers.push('stock_batches');
+    const hasHistory=blockers.length>0;
+    return {can_delete:(!hasStock&&!hasHistory),has_stock:hasStock,has_history:hasHistory,blockers,
+      reason:(hasStock?'has stock':(hasHistory?'has business/inventory history':'no stock and no history'))};
+  }
+
+  // rev20.1 (2D): a blocked permanent delete NEVER offers force/override. For a product it offers Archive (when the
+  // product is still active) or Keep Archived (when already archived); for a variant it is informational only.
+  function blockedModal(codeName,elig,opts){
+    opts=opts||{}; const isProduct=(opts.pid!=null); const active=(opts.active!==false);
+    let footer=`<button class="btn primary" data-close>${esc(t('Close'))}</button>`;
+    if(isProduct&&active) footer=`<button class="btn" data-close>${esc(t('Close'))}</button><button class="btn primary" id="lc_arch_instead">${esc(t('Archive Product'))}</button>`;
+    else if(isProduct&&!active) footer=`<button class="btn primary" data-close>${esc(t('Keep Archived'))}</button>`;
+    openModal(`<div class="modal-h"><div><h3>${esc(t('Cannot delete'))}</h3></div><button class="x" data-close>&times;</button></div>
+      <div class="modal-b">
+        <div class="section-note" style="border-color:#f3c7c7;background:var(--red-bg);color:var(--red)">${esc(isProduct?t('This product cannot be permanently deleted because it has business or inventory history.'):t('This variant cannot be permanently deleted because it has business or inventory history.'))}</div>
+        <p style="margin-top:8px"><b>${esc(codeName)}</b></p>
+        <div class="muted" style="font-size:12px">${esc(t('Reason'))}: ${esc(elig&&elig.reason||'')}${(elig&&elig.blockers&&elig.blockers.length)?(' · '+esc((elig.blockers||[]).join(', '))):''}</div>
+      </div>
+      <div class="modal-f">${footer}</div>`,'md');
+    const ab=document.getElementById('lc_arch_instead'); if(ab)ab.onclick=()=>{ try{closeModal();}catch(e){} window.lcArchiveProduct(opts.pid); };
+  }
+
+  window.lcArchiveProduct=async function(pid){
+    if(!canLifecycle())return; const p=productById(+pid); if(!p)return;
+    confirmDialog(esc(t('Archive Product')),
+      `<div class="section-note">${esc(t('Archived products are hidden from day-to-day lists but keep all history. You can restore them anytime.'))}</div><p style="margin-top:8px"><b>${esc(p.code||'')}</b> — ${esc(p.name||'')}</p>`,
+      async()=>{ try{
+          if(sec()){ const res=await sbRpc('iw_archive_product',{p_product_id:+pid},true); if(!res||res.ok!==true)throw new Error((res&&res.message)||'archive failed'); await iwCatalogReload(); }
+          else { p.active=false; if(typeof logAudit==='function')logAudit('Product Archived','Product',p.id,p.code||'',{name:p.name}); }
+          afterCatalogChange(); toast(t('Product archived'),(p.code||'')+' · '+(p.name||''),'ok');
+        }catch(e){ toast(t('Cannot archive'),(e&&e.message)||String(e),'err'); }
+      }, false);
+  };
+  window.lcRestoreProduct=async function(pid){
+    if(!canLifecycle())return; const p=productById(+pid); if(!p)return;
+    try{
+      if(sec()){ const res=await sbRpc('iw_restore_product',{p_product_id:+pid},true); if(!res||res.ok!==true)throw new Error((res&&res.message)||'restore failed'); await iwCatalogReload(); }
+      else { p.active=true; if(typeof logAudit==='function')logAudit('Product Restored','Product',p.id,p.code||'',{name:p.name}); }
+      afterCatalogChange(); toast(t('Product restored'),(p.code||'')+' · '+(p.name||''),'ok');
+    }catch(e){ toast(t('Cannot restore'),(e&&e.message)||String(e),'err'); }
+  };
+  window.lcDeleteProduct=async function(pid){
+    if(!canLifecycle())return; const p=productById(+pid); if(!p)return;
+    let elig=null;
+    try{ elig = sec() ? await sbRpc('iw_product_delete_eligibility',{p_product_id:+pid},true) : localProductEligibility(+pid); }
+    catch(e){ toast(t('Cannot delete'),(e&&e.message)||String(e),'err'); return; }
+    if(!elig || elig.can_delete!==true){ blockedModal((p.code||'')+' — '+(p.name||''),elig,{pid:+pid,active:p.active!==false}); return; }
+    confirmDialog(esc(t('Delete Permanently')),
+      `<div class="section-note" style="border-color:#f3c7c7;background:var(--red-bg);color:var(--red)">${esc(t('Permanently delete this product? This cannot be undone.'))}</div>
+       <div class="muted" style="font-size:12px;margin-top:6px">${esc(t('Only a product with zero stock and no history can be permanently deleted.'))}</div>
+       <p style="margin-top:8px"><b>${esc(p.code||'')}</b> — ${esc(p.name||'')}</p>`,
+      async()=>{ try{
+          if(sec()){ const res=await sbRpc('iw_delete_unused_product',{p_product_id:+pid},true); if(!res||res.ok!==true)throw new Error((res&&res.message)||'delete failed'); await iwCatalogReload(); }
+          else { const e2=localProductEligibility(+pid); if(e2.can_delete!==true){ blockedModal((p.code||'')+' — '+(p.name||''),e2,{pid:+pid,active:p.active!==false}); return; }
+                 DB.productVariants=(DB.productVariants||[]).filter(v=>+v.productId!==+pid); DB.products=(DB.products||[]).filter(x=>+x.id!==+pid);
+                 if(typeof logAudit==='function')logAudit('Product Deleted Permanently','Product',+pid,p.code||'',{name:p.name}); }
+          afterCatalogChange(); toast(t('Product permanently deleted'),(p.code||''),'ok');
+        }catch(e){ toast(t('Cannot delete'),(e&&e.message)||String(e),'err'); }
+      }, true);
+  };
+  window.lcDeleteVariant=async function(vid){
+    if(!canLifecycle())return; const v=(DB.productVariants||[]).find(x=>+x.id===+vid); if(!v)return;
+    let elig=null;
+    try{ elig = sec() ? await sbRpc('iw_variant_delete_eligibility',{p_variant_id:+vid},true) : localVariantEligibility(+vid); }
+    catch(e){ toast(t('Cannot delete'),(e&&e.message)||String(e),'err'); return; }
+    if(!elig || elig.can_delete!==true){ blockedModal((v.sku||('#'+vid)),elig); return; }
+    confirmDialog(esc(t('Delete Permanently')),
+      `<div class="section-note" style="border-color:#f3c7c7;background:var(--red-bg);color:var(--red)">${esc(t('Delete this variant permanently?'))}</div>
+       <p style="margin-top:8px"><b>${esc(v.sku||('#'+vid))}</b></p>`,
+      async()=>{ try{
+          if(sec()){ const res=await sbRpc('iw_delete_unused_variant',{p_variant_id:+vid},true); if(!res||res.ok!==true)throw new Error((res&&res.message)||'delete failed'); await iwCatalogReload(); }
+          else { const e2=localVariantEligibility(+vid); if(e2.can_delete!==true){ blockedModal((v.sku||('#'+vid)),e2); return; }
+                 DB.productVariants=(DB.productVariants||[]).filter(x=>+x.id!==+vid);
+                 if(typeof logAudit==='function')logAudit('Variant Deleted Permanently','Variant',+vid,v.sku||'',{product_id:v.productId}); }
+          afterCatalogChange(); toast(t('Variant permanently deleted'),(v.sku||''),'ok');
+        }catch(e){ toast(t('Cannot delete'),(e&&e.message)||String(e),'err'); }
+      }, true);
+  };
+})();
+/*═══════════════ END v3.26 (rev20) PRODUCT LIFECYCLE MODULE ═══════════════*/
+
+/*═══════════════ v3.26 (rev20) USERS & ACCESS — Scope A (real Supabase Auth users + public.profiles) ═══════════════
+ * Administrator-only, cloud (secure) mode only. Reads real users via admin_list_users(); creates/invites a REAL Auth
+ * user via the admin-users Edge Function (the service_role key stays SERVER-SIDE and is NEVER shipped to the browser);
+ * edits full name / role / linked salesperson via admin_update_user(); sets per-user inventory SECTION access via
+ * admin_set_user_access(). Section access can only NARROW the Inventory User base role — it can never expand it and
+ * never grants finance/cost. A user cannot change their own role from here (UI lock; the server RLS also blocks
+ * self-escalation). No "disable" toggle is shown because it is not really enforced server-side (never fake-disable).
+ */
+(function(){
+  const ROLES=['Administrator','Finance Manager','Accountant','AR Accountant','HR Manager','Attendance Operator','Sales Manager','Sales Representative','Inventory User','Viewer'];
+  const SECTIONS=[['catalog','Catalog'],['inventory','Inventory'],['warehouses','Warehouses'],['stock_transfers','Stock Transfers']];
+  function isAdminSecure(){ try{ return (typeof isAdmin==='function'&&isAdmin())&&(typeof secureMode==='function'&&secureMode()); }catch(e){ return false; } }
+  function val(id){ const el=document.getElementById(id); return el?el.value:''; }
+  function note(m,err){ return `<div class="section-note" style="margin-top:8px;${err?'border-color:#f3c7c7;background:var(--red-bg);color:var(--red)':''}">${esc(m)}</div>`; }
+  function repName(id){ try{ const s=DB.salespersons.find(x=>+x.id===+id); return s?s.name:('#'+id); }catch(e){ return '#'+id; } }
+  function roleOpts(sel){ return ROLES.map(r=>`<option value="${esc(r)}" ${sel===r?'selected':''}>${esc(t(r))}</option>`).join(''); }
+  function repOpts(sel){ return `<option value="">${esc(t('— none —'))}</option>`+DB.salespersons.map(s=>`<option value="${s.id}" ${+sel===+s.id?'selected':''}>${esc(s.name)}</option>`).join(''); }
+
+  // Call the admin-users Edge Function. Only the signed-in Administrator's JWT is sent; the service_role key never
+  // leaves the server. Returns the safe metadata object; throws with the server's error message on failure.
+  async function sbFn(name, body){
+    const c=getCloud(); if(!c)throw new Error(t('Cloud not configured'));
+    const tok=(SESSION&&SESSION.token)?SESSION.token:c.key;
+    const r=await fetch(`${c.url}/functions/v1/${name}`,{method:'POST',headers:{'apikey':c.key,'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+    const j=await r.json().catch(()=>null);
+    if(!r.ok||!j||j.ok!==true){ throw new Error((j&&j.error)||('HTTP '+r.status)); }
+    return j;
+  }
+
+  let _uaCache=[];
+  // rev20.2 (3A) — a stable request_key for the CURRENT Add User save. Minted when the form opens, reused across
+  // retries of the same save (so a lost-response retry is idempotent server-side), cleared on success.
+  let _uaAddKey=null;
+  function _uaNewKey(){ try{ if(typeof crypto!=='undefined'&&crypto.randomUUID)return crypto.randomUUID(); }catch(e){} return 'uakey-'+Date.now()+'-'+Math.random().toString(36).slice(2); }
+  window.uaRender=async function(box){
+    if(!box)box=document.getElementById('settingsBody'); if(!box)return;
+    if(!isAdminSecure()){ box.innerHTML=`<div class="card"><div class="card-b"><div class="section-note">${esc(t('This page is available to Administrators only.'))}</div></div></div>`; return; }
+    box.innerHTML=`<div class="card"><div class="card-h"><h3>&#128100; ${esc(t('Users & Access'))}</h3><div class="right"><button class="btn primary sm" onclick="uaOpenAdd()">${esc(t('+ Add User'))}</button></div></div>
+      <div class="card-b"><div class="section-note" style="font-size:11.5px;margin-bottom:10px">${esc(t('Manage the real people who can sign in, their role, and their inventory-section access.'))}</div>
+      <div id="uaBody"><div class="muted" style="padding:12px">${esc(t('Loading users…'))}</div></div></div></div>`;
+    try{ const rows=await sbRpc('admin_list_users',{},true); _uaCache=Array.isArray(rows)?rows:[]; uaRenderTable(); }
+    catch(e){ const b=document.getElementById('uaBody'); if(b)b.innerHTML=note((e&&e.message)||String(e),true); }
+  };
+  function uaRenderTable(){
+    const box=document.getElementById('uaBody'); if(!box)return;
+    if(!_uaCache.length){ box.innerHTML=`<div class="empty" style="padding:14px"><b>${esc(t('No users yet'))}</b></div>`; return; }
+    const meId=(SESSION&&SESSION.uid)||'';
+    const body=_uaCache.map(u=>{
+      const isInv=(u.role==='Inventory User'); const acc=u.access||{};
+      // rev20.2 (1D) — show EFFECTIVE access: Catalog is a prerequisite for Inventory & Stock Transfers. Configured
+      // rows come from admin_list_users (raw); here we grey a section that is off OR effectively off (catalog off).
+      const catOn=(acc.catalog!==false);
+      const effOn=(k)=>((k==='inventory'||k==='stock_transfers')?(acc[k]!==false&&catOn):(acc[k]!==false));
+      const accCell=isInv?SECTIONS.map(s=>{const on=effOn(s[0]);const dep=(!on&&catOn===false&&(s[0]==='inventory'||s[0]==='stock_transfers'));
+        return `<span class="badge ${on?'b-green':'b-gray'}" style="margin:1px" title="${dep?esc(t('Unavailable while Catalog is off')):''}">${esc(t(s[1]))}${on?'':' ✕'}</span>`;}).join(' '):'<span class="muted">—</span>';
+      return `<tr>
+        <td><b>${esc(u.full_name||'—')}</b>${String(u.id)===String(meId)?` <span class="badge b-blue">${esc(t('You'))}</span>`:''}</td>
+        <td class="muted">${esc(u.email||'—')}</td>
+        <td>${esc(t(u.role||'Viewer'))}</td>
+        <td>${u.salesperson_id?esc(repName(u.salesperson_id)):'<span class="muted">—</span>'}</td>
+        <td>${accCell}</td>
+        <td class="num row-act"><button class="btn sm" onclick="uaOpenEdit('${esc(String(u.id))}')">${esc(t('Edit'))}</button></td>
+      </tr>`;
+    }).join('');
+    box.innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('Full Name'))}</th><th>${esc(t('Email'))}</th><th>${esc(t('Role'))}</th><th>${esc(t('Linked Salesperson'))}</th><th>${esc(t('Inventory Section Access'))}</th><th class="num col-act">${esc(t('Actions'))}</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+  function uaSectionTogglesHTML(acc){
+    return `<div class="section-note" style="font-size:11px;margin:8px 0">${esc(t('These sections can only NARROW the Inventory User base access — they can never grant finance or cost.'))}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${SECTIONS.map(s=>`<label id="ua_sec_lbl_${s[0]}" style="display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:6px 10px"><input type="checkbox" id="ua_sec_${s[0]}" ${acc[s[0]]===false?'':'checked'}> ${esc(t(s[1]))}</label>`).join('')}</div>
+      <div id="ua_sec_dephint" class="muted" style="font-size:11px;margin-top:6px;display:none">${esc(t('When Catalog is off, Inventory and Stock Transfers are effectively unavailable.'))}</div>`;
+  }
+  function uaCollectAccess(){ const o={}; SECTIONS.forEach(s=>{ const el=document.getElementById('ua_sec_'+s[0]); if(el)o[s[0]]=!!el.checked; }); return o; }
+  // rev20.2 (1D) — reflect the Catalog→(Inventory,Stock Transfers) dependency in the toggle UI (raw values still saved).
+  function uaSyncSectionDeps(){
+    const cat=document.getElementById('ua_sec_catalog'); if(!cat)return; const catOn=!!cat.checked;
+    ['inventory','stock_transfers'].forEach(k=>{ const lbl=document.getElementById('ua_sec_lbl_'+k); if(lbl)lbl.style.opacity=catOn?'':'0.5'; });
+    const hint=document.getElementById('ua_sec_dephint'); if(hint)hint.style.display=catOn?'none':'';
+  }
+  function uaSyncRoleUI(role, acc){
+    const repRow=document.getElementById('ua_rep_row'); if(repRow)repRow.style.display=(role==='Sales Representative')?'':'none';
+    const secRow=document.getElementById('ua_sec_row');
+    if(secRow){ if(role==='Inventory User'){ secRow.style.display=''; secRow.innerHTML=uaSectionTogglesHTML(acc||{});
+        const cat=document.getElementById('ua_sec_catalog'); if(cat)cat.onchange=uaSyncSectionDeps; uaSyncSectionDeps(); }
+      else { secRow.style.display='none'; secRow.innerHTML=''; } }
+  }
+  window.uaOpenAdd=function(){
+    if(!isAdminSecure())return;
+    _uaAddKey=_uaNewKey();   // a genuinely new Add User form operation → a fresh idempotency key
+    openModal(`<div class="modal-h"><div><h3>${esc(t('Add User'))}</h3></div><button class="x" data-close>&times;</button></div>
+      <div class="modal-b"><div class="form-grid">
+        <div class="form-row"><label>${esc(t('Full Name'))} <span class="req">*</span></label><input id="ua_name" dir="auto"></div>
+        <div class="form-row"><label>${esc(t('Email'))} <span class="req">*</span></label><input id="ua_email" type="email" dir="ltr"></div>
+        <div class="form-row"><label>${esc(t('Role'))} <span class="req">*</span></label><select id="ua_role">${roleOpts('Viewer')}</select></div>
+        <div class="form-row" id="ua_rep_row" style="display:none"><label>${esc(t('Linked Salesperson'))} <span class="req">*</span></label><select id="ua_rep">${repOpts('')}</select></div>
+      </div>
+      <div id="ua_sec_row" style="display:none"></div>
+      <div id="ua_msg"></div></div>
+      <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" id="ua_save">${esc(t('Save User'))}</button></div>`,'md');
+    const roleSel=document.getElementById('ua_role'); const sync=()=>uaSyncRoleUI(roleSel.value,null); roleSel.onchange=sync; sync();
+    document.getElementById('ua_save').onclick=uaDoAdd;
+  };
+  async function uaDoAdd(){
+    const name=(val('ua_name')||'').trim(), email=(val('ua_email')||'').trim().toLowerCase(), role=val('ua_role');
+    const repId=+val('ua_rep')||null; const msg=document.getElementById('ua_msg');
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ if(msg)msg.innerHTML=note(t('Email is required and must be valid.'),true); return; }
+    if(!name){ if(msg)msg.innerHTML=note(t('A full name is required.'),true); return; }
+    if(role==='Sales Representative'&&!repId){ if(msg)msg.innerHTML=note(t('A Sales Representative must be linked to a salesperson.'),true); return; }
+    if(!_uaAddKey)_uaAddKey=_uaNewKey();
+    const body={action:'create',request_key:_uaAddKey,email,full_name:name,role,salesperson_id:(role==='Sales Representative'?repId:null)};
+    if(role==='Inventory User')body.access=uaCollectAccess();
+    const btn=document.getElementById('ua_save'); if(btn){btn.disabled=true;btn.textContent=t('Saving…');}
+    try{ await sbFn('admin-users',body); _uaAddKey=null; toast(t('User created'),email,'ok'); closeModal(); uaRender(); }   // consumed on success → next add mints a new key
+    catch(e){ if(btn){btn.disabled=false;btn.textContent=t('Save User');} if(msg)msg.innerHTML=note((e&&e.message)||String(e),true); }   // keep _uaAddKey so a retry of the SAME save is idempotent
+  }
+  window.uaOpenEdit=function(uid){
+    if(!isAdminSecure())return;
+    const u=_uaCache.find(x=>String(x.id)===String(uid)); if(!u)return;
+    const isMe=(String(u.id)===String((SESSION&&SESSION.uid)||''));
+    openModal(`<div class="modal-h"><div><h3>${esc(t('Edit User'))}</h3><div class="sub">${esc(u.email||'')}</div></div><button class="x" data-close>&times;</button></div>
+      <div class="modal-b"><div class="form-grid">
+        <div class="form-row"><label>${esc(t('Full Name'))} <span class="req">*</span></label><input id="ua_name" dir="auto" value="${esc(u.full_name||'')}"></div>
+        <div class="form-row"><label>${esc(t('Role'))} <span class="req">*</span></label><select id="ua_role" ${isMe?'disabled':''}>${roleOpts(u.role)}</select></div>
+        <div class="form-row" id="ua_rep_row" style="display:none"><label>${esc(t('Linked Salesperson'))} <span class="req">*</span></label><select id="ua_rep">${repOpts(u.salesperson_id)}</select></div>
+      </div>
+      <div id="ua_sec_row" style="display:none"></div>
+      ${isMe?`<div class="section-note" style="font-size:11px;margin-top:8px">${esc(t('You cannot change your own role.'))}</div>`:''}
+      <div id="ua_msg"></div></div>
+      <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" id="ua_save">${esc(t('Save User'))}</button></div>`,'md');
+    const roleSel=document.getElementById('ua_role'); const sync=()=>uaSyncRoleUI(roleSel.value,u.access||{}); roleSel.onchange=sync; sync();
+    document.getElementById('ua_save').onclick=()=>uaDoEdit(u);
+  };
+  async function uaDoEdit(u){
+    const name=(val('ua_name')||'').trim(); const roleEl=document.getElementById('ua_role');
+    const role=(roleEl&&roleEl.disabled)?u.role:val('ua_role');   // self-role locked
+    const repId=+val('ua_rep')||null; const msg=document.getElementById('ua_msg');
+    if(!name){ if(msg)msg.innerHTML=note(t('A full name is required.'),true); return; }
+    if(role==='Sales Representative'&&!repId){ if(msg)msg.innerHTML=note(t('A Sales Representative must be linked to a salesperson.'),true); return; }
+    const btn=document.getElementById('ua_save'); if(btn){btn.disabled=true;btn.textContent=t('Saving…');}
+    try{
+      // rev20.4 (A3) — ONE atomic RPC: profile role + linked salesperson + Inventory section access + audit commit in a
+      // single DB transaction (no non-atomic two-step save that could leave a partial Inventory-User default-all-ON state).
+      // For an Inventory User the complete four-flag access object is sent; for any other role access is null (rows cleared).
+      const p_access=(role==='Inventory User')?uaCollectAccess():null;
+      await sbRpc('admin_update_user_atomic',{p_user_id:u.id,p_full_name:name,p_role:role,p_salesperson_id:(role==='Sales Representative'?repId:null),p_access},true);
+      toast(t('User saved'),u.email||name,'ok'); closeModal(); uaRender();
+    }catch(e){ if(btn){btn.disabled=false;btn.textContent=t('Save User');} if(msg)msg.innerHTML=note((e&&e.message)||String(e),true); }
+  }
+})();
+/*═══════════════ END v3.26 (rev20) USERS & ACCESS MODULE ═══════════════*/
+
+/*═══════════════ v3.26 (rev20.1) PER-USER INVENTORY SECTION ACCESS — FAIL CLOSED ═══════════════
+ * NARROW-ONLY. For a signed-in Inventory User in cloud (secure) mode we read my_section_access() and hide the nav +
+ * actions for any section that is OFF, and the server enforces the same rules authoritatively (migration 11).
+ *
+ * rev20.1 (1C) FAIL-CLOSED — we distinguish two states that rev20 wrongly merged:
+ *   • authoritative map loaded, no override for a key      → that key is ON  (default-ON, backward compatible)
+ *   • the access RPC has NEVER successfully returned a map  → UNKNOWN → treat every Inventory section as OFF
+ *                                                             (do NOT assume all-ON), and the boot gate blocks entry.
+ * A LATER refresh failure keeps the LAST KNOWN authoritative map (never downgrades a good map to all-ON, and never
+ * to UNKNOWN). Only a secure Inventory User is ever narrowed; every other role is unaffected.
+ */
+var MY_SECTION_ACCESS=null;        // last authoritative map {catalog,inventory,warehouses,stock_transfers} or null
+var MY_SECTION_ACCESS_OK=false;    // true only while we hold a map we trust (a successful load, or last-known kept)
+const SECTION_NAV_MAP={ inventory:'catalog', warehouses:'warehouses', transfers:'stock_transfers',
+  movements:'inventory', batches:'inventory', invdashboard:'inventory', invreports:'inventory', stockcounts:'inventory', rmreconcile:'inventory' };
+function isSecureInvUser(){ try{ return (typeof secureMode==='function'&&secureMode())&&currentUserRole==='Inventory User'; }catch(e){ return false; } }
+// returns true when the section-access state is usable (or not applicable); false ONLY on a first-load failure for a
+// secure Inventory User (→ the caller fails the whole secure load closed).
+async function loadMySectionAccess(){
+  if(!isSecureInvUser()){ MY_SECTION_ACCESS=null; MY_SECTION_ACCESS_OK=true; return true; }   // no narrowing applies
+  if(typeof sbRpc!=='function'){ if(MY_SECTION_ACCESS_OK)return true; MY_SECTION_ACCESS_OK=false; return false; }
+  try{
+    const a=await sbRpc('my_section_access',{},true);
+    if(a&&typeof a==='object'&&!Array.isArray(a)){ MY_SECTION_ACCESS=a; MY_SECTION_ACCESS_OK=true; return true; }
+    throw new Error('invalid access map');
+  }catch(e){
+    if(MY_SECTION_ACCESS_OK && MY_SECTION_ACCESS) return true;   // keep the last-known authoritative map on a refresh failure
+    MY_SECTION_ACCESS_OK=false; return false;                    // first load failed → UNKNOWN → fail closed
+  }
+}
+// missing DB override = ON; failed/never-loaded map for a secure Inventory User = FAIL CLOSED (OFF).
+function sectionEnabled(key){
+  try{
+    if(!isSecureInvUser())return true;                 // only a secure Inventory User is ever narrowed
+    if(!(MY_SECTION_ACCESS_OK && MY_SECTION_ACCESS))return false;   // UNKNOWN → fail closed
+    return MY_SECTION_ACCESS[key]!==false;             // known map: default ON unless explicitly false
+  }catch(e){ return false; }
+}
+function sectionAccessKnown(){ return !isSecureInvUser() || !!(MY_SECTION_ACCESS_OK && MY_SECTION_ACCESS); }
+if(typeof window!=='undefined')Object.assign(window,{sectionEnabled,sectionAccessKnown,loadMySectionAccess});
+// If a section the user is currently viewing becomes OFF (admin change picked up on sync), leave that page.
+function enforceSectionOnCurrentRoute(){
+  try{
+    if(!isSecureInvUser()||typeof ROUTE==='undefined'||!ROUTE)return;
+    const sk=SECTION_NAV_MAP[ROUTE.page];
+    if(sk && !sectionEnabled(sk)){ try{ toast(t('Access Restricted'),t('An administrator changed your access.'),'warn'); }catch(e){}
+      if(typeof go==='function')go(typeof homePage==='function'?homePage():'dashboard'); }
+  }catch(e){}
+}
+// rev20.2 (1A) — the authoritative access-map load now happens INSIDE secureLoad()/secureSyncTick() BEFORE the catalog
+// reads (so Catalog OFF never triggers a rejected strict read). The wrapper here only handles the post-tick UX:
+// redirect off a section that just became restricted and re-render the nav. No second access fetch (base already did it).
+if(typeof secureSyncTick==='function'){ const __syncBaseSA=secureSyncTick; secureSyncTick=async function(){
+  const r=await __syncBaseSA();
+  try{ if(isSecureInvUser()){ enforceSectionOnCurrentRoute(); if(typeof renderNav==='function')renderNav(); } }catch(e){}
+  return r; }; }
+// NARROW-ONLY nav gate: hide an inventory-section nav id only when the base already allowed it AND the section is OFF
+// (or UNKNOWN, for a secure Inventory User). sectionEnabled() returns true for every non-Inventory role.
+if(typeof navAllowed==='function'){ const __navBaseSA=navAllowed; navAllowed=function(id){ const base=__navBaseSA(id); if(base===false)return false;
+  const sk=SECTION_NAV_MAP[id]; if(sk && !sectionEnabled(sk))return false; return base; }; }
+/*═══════════════ END v3.26 (rev20.1) SECTION ACCESS MODULE ═══════════════*/
+
+/*═══════════════ v3.26 (rev20.1) ARCHIVED-PARENT AVAILABILITY (3A/3B) ═══════════════
+ * Canonical availability for a NEW operational transaction: the variant is active AND its PARENT product exists and
+ * is NOT archived. Historical records are NOT filtered by this (they resolve directly against DB.products), so an old
+ * invoice / return / movement / transfer / statement still renders an archived product correctly. Function declaration
+ * = hoisted, so the picker code earlier in the file can call it. */
+function productSelectableForNew(pid){ try{ const p=productById(+pid); return !!(p && p.active!==false); }catch(e){ return false; } }
+function variantSelectableForNew(v){ try{ if(!v || v.active===false)return false; return productSelectableForNew(v.productId); }catch(e){ return false; } }
+if(typeof window!=='undefined')Object.assign(window,{productSelectableForNew,variantSelectableForNew});
 
 appLockGate();   // Company App Lock → (User Login) → TexCredit
 </script>
