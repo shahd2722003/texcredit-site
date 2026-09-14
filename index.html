@@ -462,7 +462,7 @@ html[dir=rtl] .exp-menu{right:auto;left:0}
 /* TexCredit build: v3.13.1 — Arabic/RTL Correction (was v3.13 Consolidated Search / Filters / Windows (Arabic RTL search fix + Salesperson
    Performance filters + Customer Statement/Collections/Cheques/Invoices month filters). Source: v3.12 Cheque
    Date Cleanup. Additive, non-destructive. */
-const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev20.4) — FINAL PRE-PRODUCTION CLOSEOUT (review build; migrations 11/12/13 patched in place [12 and 13 byte-unchanged], admin-users Edge Function patched; NO production SQL, NO deployment). (A) Users and Access provisioning is ATOMIC: profile role + Inventory section access commit in ONE PostgreSQL transaction — migration 11 adds a service_role-only admin_reconcile_provisioned_user RPC and an Administrator-only admin_update_user_atomic RPC (role allow-list, SR requires salesperson, non-SR clears it, an Inventory User REQUIRES a complete 4-boolean access object, non-Inventory clears all section rows, rollback on any failure); the Edge Function and the Edit-User Save each call ONE atomic RPC, so a partial write can never leave role=Inventory User with default-ON access. (B) Fractional prices no longer auto-round to whole EGP: egp()/egp0() display up to 2 decimals (500 stays 500, 144.5 stays 144.5, 144.25 stays 144.25; integers unchanged) and every price input uses step=0.01; stock/reorder integers and accounting round(x,2) are unchanged. (C) Invoice product search no longer reverses Arabic or numbers: the raw query stays in the input (matching uses a lowercased copy) and rerender is caret-safe via srchKeepCaret with dir=auto. (D) An Exceptional invoice + Additional discount uses the ACTIVE exceptional base: the badge, lines, totals, preview and the Customer-Basic-Info line all use activeCommercialBasePct() (Exceptional Invoice 40% + Additional 10% = 50%, additive points, rejected above 100), never the inactive Normal customer discount; commission stays frozen at Exceptional 3%. (E) Preserves every rev15 to rev20.3 fix (request_key required + claim-before-side-effects, migration 12 fail-closed, access-first Inventory boot, Catalog prerequisite dependency, RLS narrowing, migration 10 casts, cost masking, product lifecycle, Debit/Credit accounting, Arabic settlement).';
+const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev21.5) — CUSTOM USER PERMISSIONS · MFG PERSISTENCE HOTFIX. Manufacturing Settings save path: the mfg_settings_get/save RPCs now allow only Administrator + Finance Manager among legacy roles (Accountant and AR Accountant are rejected — no broadening); and securePushSettings routes a Custom user by exact permission — the broad app_settings (general-settings) write runs only with settings:edit, mfg_settings_save runs only with mfgsettings:edit (exactly once), a mfgsettings:edit-only user never attempts the broad write so no false "Cloud save failed" appears on a successful MFG save, while a real mfg_settings_save failure still surfaces; legacy save chain preserved. — was rev21.4: (1) Manufacturing Settings: a Custom mfgsettings:view user sees the page but ZERO mutation controls (Add/Edit/Enable/Disable hidden, tolerance/config inputs disabled) with defense-in-depth canAction(mfgsettings,edit) on openMfgCfgForm/saveMfgCfgForm/mfgCfgToggle/mfgCfgSetting; mfgsettings:edit persists via a narrow SECURITY DEFINER RPC (mfg_settings_save) that writes ONLY the mfgSettings key of app_settings — no general settings:edit needed, no unrelated settings exposed — and a failed secure write now surfaces (no silent swallow). (2) Expense Dashboard/Reports read the underlying data (expenses/expense_payments/expense_categories) when the user has expenses:view OR expensedash:view OR expensereports:view, while the Expenses NAV page still requires expenses:view; no create/edit is granted and direct writes stay rejected. — was rev21.3: Custom users now get FUNCTIONAL (not just visible) capabilities: the Expenses and Phase-H/BOM permission wrappers have exact Custom branches (create≠edit; approve/pay/reverse and production-ops stay ungranted; the old viewManufacturing→OPS fallback no longer escalates a fabricorders:view into manageBOM). Category/recurring/BOM create vs edit vs activate are gated by exact canAction() at each button. Sales Workspace (Preliminary Invoices / Rep Collections / My Funds) is READ-ONLY for Custom and now data-scoped (own|all) with server-enforced salesperson ownership RLS on preliminary_invoices(+lines via parent), rep_collection_submissions, rep_spending and rep_fund_movements (own requires a linked salesperson; no cross-salesperson REST leak). Edge create proves orphan ownership via a SERVER-CONTROLLED app_metadata marker (texcredit_provision_request=request_key) — a profile-less unrelated Auth user is never adopted. Migration 15 (revised in place as 15_user_custom_permissions_4) has NO silent SQL swallow and stays ONE atomic transaction. — was rev21.2: Full final-nav coverage (every nav id maps to a matrix section, is Admin-only, or is a utility — machine-tested); a FINAL navAllowed wrapper makes the per-user matrix the sole authority for Custom users so no role-based module nav wrapper (Expenses/Phase-F/Phase-H/AR/Sales-Rep/section-access) can override matrix granularity — each operational page resolves from its OWN section. Create is NOT edit: canAction(section,action) checks the EXACT action; canEdit() for Custom means edit only; Add vs Edit entry points for Customers/Purchase-Invoices/Cheques use the exact create/edit action. Export is real: exportBtn()/doExport() enforce section:export for Custom via an authoritative provider→section map (hidden button + refused direct call). New matrix sections: Expenses, Advanced Inventory, Phase-H Manufacturing, Sales Workspace. Server (revised additive migration 15 [15_user_custom_permissions_3], ONE atomic transaction on immutable 01-14): own-scope enforced INSIDE the settlement definer RPCs; confirm/reverse guard triggers so a confirm/reverse-only user cannot mutate financial fields; long-tail policy failures on existing tables abort (no silent skip) + postconditions; real expense/BOM tables mapped and RLS-gated. Edge Function create is idempotent/resumable (provisioning state) — same request_key resumes, no duplicate Auth user, changed payload → 409. NO production SQL, NO deployment (review build; revised additive migration 15 [15_user_custom_permissions_2] on immutable 01-14; admin-users Edge Function hardened; NO production SQL, NO deployment). Granular per-page permission matrix (grouped in Users and Access): every meaningful nav page is individually controllable; only enforceable actions are shown (no fake checkboxes). Server enforcement is additive and FAIL CLOSED, scoped to role=Custom: column-free RLS on every mapped table (view/create/edit/delete), status-transition RLS for invoice/return/collection/cheque confirm+reverse, OWN scope on parents AND child tables (invoice_lines/return_lines/settlement allocations via parent), and permission gates added to create/reverse settlement, stock-transfer POST and product/variant delete + eligibility (verbatim migration-13/11/12/14 bodies + one guard OR-branch, accounting byte-for-behavior). Settlements/Audit now honor the matrix for Custom users; generic canEdit() is section-specific (no cross-section bleed); Users and Access stays Administrator-only (not grantable). Legacy users keep EXACT role-based access; on first edit their TRUE effective access (role ∩ user_section_access) is preloaded and only converts to Custom on Save. Administrators are protected (never demoted/reset via this path; last admin preserved). Passwords: server-side createUser with confirmed email (min 8, confirmed), admin-only reset via updateUserById, existing-email create returns 409, never stored/returned/logged/audited. Migrations 01-14 untouched; no accounting/FIFO/inventory/settlement/commission math changed.';
 /*==================================================================================
   TEXTILE CREDIT & COLLECTIONS ERP  —  single-file interactive prototype
   Shared data model + FIFO replay engine. All views derive from one dataset.
@@ -2495,7 +2495,10 @@ function homePage(){ try{ if(typeof navAllowed!=='function'||navAllowed('dashboa
 // v3.24.1 — precise Dashboard guard: only when 'dashboard' is not permitted for this role (e.g. AR Accountant) is it
 // redirected to the role's home page. This targets ONLY 'dashboard' — detail routes (invoice/customer/rep/…) and every
 // other page are unaffected, so AR can still open individual records.
-function go(page,params){ if(page==='dashboard'&&typeof navAllowed==='function'&&!navAllowed('dashboard')){ page=homePage(); params={}; } ROUTE={page,params:params||{}};window.scrollTo(0,0);renderNav();renderView();}
+function go(page,params){ if(page==='dashboard'&&typeof navAllowed==='function'&&!navAllowed('dashboard')){ page=homePage(); params={}; }
+  // REV21 — hard route guard for Custom users: a page they lack View on can never be reached (hash/route tampering included).
+  if(currentUserRole==='Custom'&&typeof navAllowed==='function'&&!navAllowed(page)){ page=homePage(); params={}; }
+  ROUTE={page,params:params||{}};window.scrollTo(0,0);renderNav();renderView();}
 /* v3.13.1 — ARABIC/RTL SEARCH FIX (root cause). Search boxes that re-render the whole page on each keystroke
    used to call .focus() on the freshly-created input WITHOUT restoring the caret, so the caret landed at
    index 0 and every new character was PREPENDED — silently reversing the typed string (e.g. "عرام" → "مارع")
@@ -3986,7 +3989,7 @@ PAGES.customers=function(){
     <div class="ph-actions">${exportBtn('customers')}
       ${(typeof canEdit==='function'&&canEdit())?`<button class="btn" onclick="go('bulkaddcust')" title="${esc(t('Add many customers to one salesperson, fast'))}">&#128101; ${esc(t('Bulk Add Customers'))}</button>`:''}
       ${(typeof canEdit==='function'&&canEdit())?`<button class="btn" onclick="openCustomerExpenseForm()" title="${esc(t('A standalone customer debit — increases the customer\'s debt. Not a collection; no commission or bonus.'))}">&#128181; ${esc(t('Customer Expense'))}</button>`:''}
-      <button class="btn primary" onclick="openCustomerForm()">+ Add Customer</button></div></div>
+      ${canAction('customers','create')?`<button class="btn primary" onclick="openCustomerForm()">+ ${esc(t('Add Customer'))}</button>`:''}</div></div>
   <div class="card"><div class="card-b">
     <div class="seg" style="margin-bottom:10px">
       <button class="seg-btn ${custState.life==='active'?'active':''}" onclick="setCustLife('active')">${esc(t('Active'))}</button>
@@ -4101,7 +4104,7 @@ PAGES.customer=function(p){
       ${custCommercialTermsCard(c)}
     </div>
     <div class="ph-actions"><button class="btn" onclick="go('customers')">&#8592; Back</button>
-      <button class="btn" onclick="openCustomerForm(${c.id})">&#9998; Edit</button>
+      ${canAction('customers','edit')?`<button class="btn" onclick="openCustomerForm(${c.id})">&#9998; ${esc(t('Edit'))}</button>`:''}
       ${isCustomerArchived(c)
         ? (canManageCustomerLifecycle()?`<button class="btn green" onclick="restoreCustomer(${c.id})">&#8635; ${esc(t('Restore Customer'))}</button>${isAdmin()?`<button class="btn danger" onclick="openCustomerDeleteDlg(${c.id})" title="${esc(t('Administrator-only permanent deletion of this archived customer and its owned records'))}">&#9760; ${esc(t('Permanently Delete'))}</button>`:''}`:'')
         : (canManageCustomerLifecycle()?`<button class="btn" onclick="archiveCustomer(${c.id})">&#128451; ${esc(t('Archive Customer'))}</button>`:'')}
@@ -5357,8 +5360,9 @@ function customerExpenseListHTML(custId){
 let _stlBusy=false;
 let _stlPending=null;   // {sig,key} — stable request_key reused across retries of the SAME settlement (idempotency)
 function _stlNewKey(){ try{ if(typeof crypto!=='undefined'&&crypto.randomUUID)return crypto.randomUUID(); }catch(e){} return 'stl-'+Date.now()+'-'+Math.random().toString(36).slice(2); }
-function canCreateSettlement(){ if(typeof authRequired==='function'&&authRequired()&&SESSION){ return currentUserRole==='Administrator'||currentUserRole==='AR Accountant'; } return true; }
-function canReverseSettlement(){ if(typeof authRequired==='function'&&authRequired()&&SESSION){ return currentUserRole==='Administrator'; } return true; }
+// REV21.1 (#3) — settlements honor the per-user matrix for Custom users; legacy roles unchanged (server RPCs enforce the same).
+function canCreateSettlement(){ if(typeof authRequired==='function'&&authRequired()&&SESSION){ if(currentUserRole==='Administrator'||currentUserRole==='AR Accountant')return true; if(currentUserRole==='Custom')return hasPerm('settlements','create'); return false; } return true; }
+function canReverseSettlement(){ if(typeof authRequired==='function'&&authRequired()&&SESSION){ if(currentUserRole==='Administrator')return true; if(currentUserRole==='Custom')return hasPerm('settlements','reverse'); return false; } return true; }
 function customerSettlementById(id){ return (DB.customerSettlements||[]).find(x=>+x.id===+id)||null; }
 function customerSettlementsFor(custId){ return (DB.customerSettlements||[]).filter(x=>+x.customerId===+custId).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.id-a.id)); }
 // Oldest-first allocation preview over the CURRENT open balances (post-rebuild) — mirrors the rebuild() settlement pass
@@ -5578,7 +5582,7 @@ PAGES.cheques=function(){
   const bouncedTot=DB.cheques.filter(ch=>ch.status==='Bounced'&&inScope(ch)).reduce((s,ch)=>s+(+ch.amount||0),0);
   V.innerHTML=`
   <div class="page-head"><div><h1 data-i18n="Cheques">Cheques</h1><p>${DB.cheques.length} ${esc(t('cheques · a received cheque reduces debt on receipt and auto-clears on its due date'))}</p></div>
-    <div class="ph-actions">${isAdmin()?`<button class="btn" onclick="go('chequedatesync')" title="${esc(t('Cheque Due Date / Collection Date Sync'))}">&#128197; ${esc(t('Due/Collection Sync'))}</button><button class="btn" onclick="go('clouddiag')" title="${esc(t('Read-only cloud integrity diagnostics'))}">&#129514; ${esc(t('Cloud Diagnostics'))}</button>`:''} ${exportBtn('cheques')}${can('createInvoice')||canEdit()?`<button class="btn primary" onclick="openRecordCollection(null,'Cheque')">+ ${esc(t('Record Cheque'))}</button>`:''}</div></div>
+    <div class="ph-actions">${isAdmin()?`<button class="btn" onclick="go('chequedatesync')" title="${esc(t('Cheque Due Date / Collection Date Sync'))}">&#128197; ${esc(t('Due/Collection Sync'))}</button><button class="btn" onclick="go('clouddiag')" title="${esc(t('Read-only cloud integrity diagnostics'))}">&#129514; ${esc(t('Cloud Diagnostics'))}</button>`:''} ${exportBtn('cheques')}${canAction('cheques','create', can('createInvoice')||canEdit())?`<button class="btn primary" onclick="openRecordCollection(null,'Cheque')">+ ${esc(t('Record Cheque'))}</button>`:''}</div></div>
   <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">
     <div class="kpi accent-amber" style="padding:12px"><span class="k-label">${esc(t('Pending Cheques'))}</span><div class="k-val" style="font-size:20px;margin-top:6px">${egp(pendingTot)}</div><div class="sm muted">${esc(t('reduce customer debt'))}</div></div>
     <div class="kpi" style="padding:12px"><span class="k-label">${esc(t('In Company Safe'))}</span><div class="k-val" style="font-size:20px;margin-top:6px">${egp(safeTot)}</div><div class="sm muted">${esc(custodyArabic('Company Safe'))}</div></div>
@@ -5614,14 +5618,19 @@ PAGES.cheques=function(){
 };
 function chequeRowActions(ch){
   const a=[];
+  // REV21.2 (B/E) — for a Custom user, Edit needs cheques:edit; the status transitions (deposit/custody/clear/bounce/cancel)
+  // need cheques:reverse OR cheques:edit (the server enforces the same via the status-transition RLS + the confirm/reverse
+  // guard trigger). Legacy roles are unchanged (both flags resolve to true).
+  const cE = canAction('cheques','edit');
+  const cR = (currentUserRole==='Custom') ? (hasPerm('cheques','reverse')||hasPerm('cheques','edit')) : true;
   // v3.12 — Edit is available for EVERY status (incl. Cleared/Bounced/Cancelled): dates & metadata stay correctable.
-  a.push(`<button class="icon-act" title="${esc(t('Edit Cheque'))}" onclick="openChequeEditDlg(${ch.id})">&#9998;</button>`);
-  if(ch.status==='Received')a.push(`<button class="icon-act" title="${esc(t('Mark Deposited'))}" onclick="chequeDeposit(${ch.id})">&#8681;</button>`);
-  if(isPendingCheque(ch)){a.push(`<button class="icon-act" title="${esc(t('Custody / Endorse to Supplier'))}" onclick="chequeCustodyDlg(${ch.id})">&#127970;</button>`);
+  if(cE) a.push(`<button class="icon-act" title="${esc(t('Edit Cheque'))}" onclick="openChequeEditDlg(${ch.id})">&#9998;</button>`);
+  if(ch.status==='Received'&&cR)a.push(`<button class="icon-act" title="${esc(t('Mark Deposited'))}" onclick="chequeDeposit(${ch.id})">&#8681;</button>`);
+  if(isPendingCheque(ch)&&cR){a.push(`<button class="icon-act" title="${esc(t('Custody / Endorse to Supplier'))}" onclick="chequeCustodyDlg(${ch.id})">&#127970;</button>`);
     a.push(`<button class="icon-act" title="${esc(t('Clear'))}" onclick="chequeClearDlg(${ch.id})">&#10003;</button>`);
     a.push(`<button class="icon-act" title="${esc(t('Bounce'))}" onclick="chequeBounceDlg(${ch.id})">&#10007;</button>`);
     a.push(`<button class="icon-act" title="${esc(t('Cancel'))}" onclick="chequeCancel(${ch.id})">&#128465;</button>`);}
-  else if(ch.status==='Cleared'){a.push(`<button class="icon-act" title="${esc(t('Bounce / reverse'))}" onclick="chequeBounceDlg(${ch.id})">&#10007;</button>`);}
+  else if(ch.status==='Cleared'&&cR){a.push(`<button class="icon-act" title="${esc(t('Bounce / reverse'))}" onclick="chequeBounceDlg(${ch.id})">&#10007;</button>`);}
   return a.join('')||'—';
 }
 // v3.4 — custody / endorsement dialog. Company Safe ⇄ With Supplier (supplier + supplier received date required).
@@ -5719,7 +5728,9 @@ function chDateInput(v){ if(!v)return ''; if(v instanceof Date)return dateToInpu
 // The SAME collection this cheque settled into (reuse — never mint). Used for safe metadata propagation.
 function chequeLinkedCollection(ch){ if(ch.collectionId){ const c=(DB.collections||[]).find(x=>+x.id===+ch.collectionId&&!x.voided); if(c)return c; } return chequeSettlementCollection(ch)||null; }
 function openChequeEditDlg(id){
-  if(!requireEdit())return; const ch=chequeById(id); if(!ch)return;
+  // REV21.2 (B) — editing cheque metadata needs cheques:edit exactly (Custom). Legacy: role-wide edit (unchanged).
+  if(!canAction('cheques','edit',(typeof canEdit==='function')?canEdit():true)){ toast(t('Not permitted'), t('You cannot edit cheques'),'warn'); return; }
+  const ch=chequeById(id); if(!ch)return;
   const fin=chequeIsFinalized(ch);
   openModal(`<div class="modal-h"><div><h3>&#9998; ${esc(t('Edit Cheque'))}</h3><div class="sub">${esc(ch.chequeNumber||('CHQ-'+ch.id))} · ${esc(custName(ch.customerId))} · ${egp(ch.amount)} · ${chequeStatusBadge(ch.status)}</div></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b">
@@ -10598,7 +10609,8 @@ function cuRefreshCommHint(){const el=document.getElementById('cu_commHint');if(
   else { html+=` · ${esc(t('Commission Mode'))}: <span class="badge b-slate" style="font-size:9px">${esc(t('Use Default Rule'))}</span> · ${esc(t('Effective Commission %'))}: ${defTxt}`; }
   el.innerHTML=html;}
 function openCustomerForm(id){
-  if(!requireEdit())return;
+  // REV21.2 (B) — exact action: opening the ADD form needs customers:create; opening EDIT needs customers:edit.
+  if(!canAction('customers', id?'edit':'create', (typeof canEdit==='function')?canEdit():true)){ toast(t('Not permitted'), id?t('You cannot edit customers'):t('You cannot add customers'),'warn'); return; }
   _hsPending.customer=null;   // fresh form → never inherit a prior pending/failed save's identity
   const c=id?custById(id):null;
   const discs=uniqueDiscounts();
@@ -10633,6 +10645,8 @@ function openCustomerForm(id){
   cuCTypeToggle();   // v3.26 — start with the Normal rows hidden for an existing Exceptional customer
 }
 async function saveCustomer(id){
+  // REV21.2 (B) — server RLS is authoritative; this client guard keeps create/edit exact for a Custom user.
+  if(!canAction('customers', id?'edit':'create', (typeof canEdit==='function')?canEdit():true)){ toast(t('Not permitted'), id?t('You cannot edit customers'):t('You cannot add customers'),'warn'); return; }
   if(_hsBusy.customer)return;                              // double-submit guard (sync, before any build/write)
   const g=x=>{const el=document.getElementById(x);return el?el.value:'';};
   const name=g('cu_name').trim(),limit=+g('cu_limit');
@@ -12847,7 +12861,12 @@ async function securePushDep(childKind,childObj,parentKind,parentObj){
   try{ await sbUpsert(ct,TMAP[ct].to(childObj)); }catch(e){ cloudErr(childKind,childObj,e); }
 }
 function secureRemove(kind,id){ if(!secureMode())return; sbDelete(KIND2TBL[kind],id).catch(e=>{cloudErr(kind,{id},e);}); }
+// REV21.5 (issue 2) — a broad app_settings write is a GENERAL settings save. A Custom user may run it ONLY when they
+// actually hold settings:edit; a mfgsettings:edit-only Custom user must NOT attempt it (it would fail RLS and raise a
+// false "Cloud save failed"). Legacy roles are unaffected (always allowed here; RLS still gates the row).
+function canPushGeneralSettings(){ return currentUserRole!=='Custom' || (typeof hasPerm==='function' && hasPerm('settings','edit')); }
 async function securePushSettings(){ if(!secureMode())return;
+  if(!canPushGeneralSettings())return;   // REV21.5 — skip the broad general-settings write for a Custom non-settings:edit user (no false error)
   try{await sbUpsert('app_settings',{id:'main',data:{creditSettings:DB.creditSettings,bonusInterpolate:DB.bonusInterpolate,bonusRanges:DB.bonusRanges,roles:DB.roles,commissionSettings:DB.commissionSettings,commissionApplied:DB.commissionApplied,commissionAdjustments:DB.commissionAdjustments,seqCommAdj:DB.seqCommAdj,commissionRecalcRuns:DB.commissionRecalcRuns,seqRecalcRun:DB.seqRecalcRun,commissionChangeRuns:DB.commissionChangeRuns,seqCommChangeRun:DB.seqCommChangeRun,commissionRepairRuns:DB.commissionRepairRuns,seqCommRepairRun:DB.seqCommRepairRun,returnReasons:DB.returnReasons,customFieldDefs:DB.customFieldDefs,defectReasons:DB.defectReasons,fabricStatuses:DB.fabricStatuses,paymentMethods:DB.paymentMethods,chequeStatuses:DB.chequeStatuses,acctConfig:DB.acctConfig,banks:DB.banks,cashboxes:DB.cashboxes,supplierPaymentMethods:DB.supplierPaymentMethods,paymentTermsList:DB.paymentTermsList,apConfig:DB.apConfig,
     // Phase D · HR masters + policy (configurable; deactivate not destroy)
     hrDepartments:DB.hrDepartments,hrJobTitles:DB.hrJobTitles,hrBranches:DB.hrBranches,hrEmploymentStatuses:DB.hrEmploymentStatuses,hrEmployeeCategories:DB.hrEmployeeCategories,hrShiftTypes:DB.hrShiftTypes,hrLeaveTypes:DB.hrLeaveTypes,hrPermissionTypes:DB.hrPermissionTypes,hrEarningCategories:DB.hrEarningCategories,hrDeductionCategories:DB.hrDeductionCategories,hrAllowanceTypes:DB.hrAllowanceTypes,hrBonusTypes:DB.hrBonusTypes,hrHolidays:DB.hrHolidays,hrImportTemplates:DB.hrImportTemplates,attendanceSettings:DB.attendanceSettings,payrollSettings:DB.payrollSettings,productCategories:DB.productCategories,materialTypes:DB.materialTypes,unitsOfMeasure:DB.unitsOfMeasure,sizePresets:DB.sizePresets,colorPresets:DB.colorPresets,discountExceptionReasons:DB.discountExceptionReasons,customerTombstones:DB.customerTombstones,seqTombstone:DB.seqTombstone,monthReviews:DB.monthReviews,seqMonthReview:DB.seqMonthReview,chequeDateSyncRuns:DB.chequeDateSyncRuns,seqChequeDateSyncRun:DB.seqChequeDateSyncRun,invImportRuns:DB.invImportRuns,
@@ -13274,7 +13293,7 @@ async function ensureFreshToken(){
   if(!(SESSION&&SESSION.refresh&&SESSION.expiresAt))return;
   if(Date.now()>SESSION.expiresAt-120000){await refreshSession();} // refresh ~2 min before expiry
 }
-function authLogout(){SESSION=null;saveSession();currentUserRole=null;currentUserName=null;SCOPE=null;IDENTITY=freshIdentity();closeDrawer();renderNav();showLoginIfNeeded();}
+function authLogout(){SESSION=null;saveSession();currentUserRole=null;currentUserName=null;SCOPE=null;MY_PERMS=null;IDENTITY=freshIdentity();closeDrawer();renderNav();showLoginIfNeeded();}
 function resolveRole(){
   if(!SESSION){currentUserRole=null;SCOPE=null;return;}
   const u=DB.users.find(x=>x.email&&x.email.toLowerCase()===SESSION.email.toLowerCase());
@@ -13308,7 +13327,9 @@ async function resolveCloudIdentity(opts){
     const prevRole=currentUserRole, prevName=currentUserName;
     if(row){
       currentUserRole=row.role||'Viewer'; currentUserName=row.full_name||row.email||SESSION.email;
-      SCOPE=(currentUserRole==='Sales Representative'&&row.salesperson_id)?row.salesperson_id:null;
+      // REV21 — a Custom user linked to a salesperson is scoped like a rep so Own-data sections filter to their records.
+      SCOPE=((currentUserRole==='Sales Representative'||currentUserRole==='Custom')&&row.salesperson_id)?row.salesperson_id:null;
+      try{ await loadMyPermissions(); }catch(_){}   // load the per-user matrix right after identity resolves
       IDENTITY={uid:SESSION.uid,email:SESSION.email,role:currentUserRole,name:currentUserName,spId:row.salesperson_id||null,
         resolved:true,matchOk:(String(row.id)===String(SESSION.uid)),at:Date.now(),error:''};
     }else{
@@ -13388,8 +13409,109 @@ const HR_PERMS_FIN={...HR_PERMS_NONE,viewHR:true,viewAttendance:true,viewSalary:
 const HR_PERMS_VIEW={...HR_PERMS_NONE,viewHR:true,viewAttendance:true};
 const FULL_PERMS={edit:true,rules:true,seeAll:true,viewInventory:true,editProducts:true,adjustStock:true,stockIn:true,
   createInvoice:true,editInvoice:true,confirmInvoice:true,cancelInvoice:true,customCommission:true,...WH_PERMS_ALL,...MFG_PERMS_ALL,...ACCT_PERMS_ALL,...AP_PERMS_ALL,...TR_PERMS_ALL,...HR_PERMS_ALL};
+// ══════════════ REV21 per-user CUSTOM permissions (client mirror; the SERVER re-enforces via RLS + has_permission) ══════════════
+let MY_PERMS=null;   // {section:{can_view,...,data_scope}} for the signed-in user, from public.my_permissions()
+async function loadMyPermissions(){
+  try{
+    if(!(typeof authRequired==='function'&&authRequired()&&SESSION)){ MY_PERMS=null; return true; }
+    MY_PERMS = (await sbRpc('my_permissions',{},true)) || {};
+    return true;
+  }catch(e){ MY_PERMS=null; return false; }   // fail closed (a Custom user with no map sees nothing until it loads)
+}
+function hasPerm(section,action){
+  if(!(typeof authRequired==='function'&&authRequired()&&SESSION))return true;   // local / demo → full
+  if(currentUserRole==='Administrator')return true;                              // Administrator bypass
+  const m=MY_PERMS&&MY_PERMS[section]; if(!m)return false;                        // fail closed
+  return m['can_'+action]===true;
+}
+function sectionScope(section){
+  if(currentUserRole==='Administrator')return 'all';
+  const m=MY_PERMS&&MY_PERMS[section]; return (m&&m.data_scope)||'all';
+}
+// nav page id → permission section. Unmapped ⇒ default-deny for a Custom user; null ⇒ always-allowed utility page.
+const PAGE_SECTION={
+  dashboard:'dashboard',
+  customers:'customers',customer:'customers',bulkaddcust:'customers',custimport:'customers',tombstones:'customers',
+  ar:'ar',duedaterebuild:'ar',
+  invoices:'invoices',invoice:'invoices',
+  returns:'returns',
+  collections:'collections',
+  cheques:'cheques',chequeregister:'cheques',chequedatesync:'cheques',
+  settlements:'settlements',
+  suppliers:'suppliers',supplierstatement:'suppliers',
+  reps:'reps',salesreps:'reps',
+  commissions:'commissions',commsim:'commissions',commdiag:'commissions',commrecalc:'commrecalc',
+  bonuses:'bonuses',
+  inventory:'catalog',product:'catalog',pgen:'catalog',bulkprice:'catalog',fgimport:'catalog',
+  movements:'inventory',batches:'inventory',invdashboard:'inventory',
+  warehouses:'warehouses',
+  transfers:'transfers',
+  mfgdash:'mfgdash',fabricorders:'fabricorders',
+  rawmaterials:'rawmaterials',rawmat:'rawmaterials',rawmatdetail:'rawmaterials',rawimport:'rawmaterials',rmhistlist:'rawmaterials',rmhistdetail:'rawmaterials',rmhistnew:'rawmaterials',rmhistimport:'rawmaterials',rawunify:'rawmaterials',rmreconcile:'rawmaterials',
+  prodorders:'prodorders',cutting:'cutting',lines:'lines',quality:'quality',packing:'packing',trace:'trace',mfgconfig:'mfgconfig',
+  purchasing:'purchasing',purchaseorders:'purchasing',purchaserequests:'purchasing',goodsreceipts:'purchasing',stockcounts:'purchasing',
+  hrdash:'hrdash',employees:'employees',employee:'employees',empimport:'employees',shifts:'shifts',attendance:'attendance',attmonth:'attmonth',fingerprint:'fingerprint',unmatched:'fingerprint',leaves:'leaves',payroll:'payroll',advances:'advances',hrsettings:'hrsettings',
+  accounting:'accounting',coa:'coa',ledger:'ledger',opening:'opening',reconcile:'reconcile',
+  ap:'ap',purchaseinvoices:'purchaseinvoices',supplierpayments:'supplierpayments',purchasereturns:'purchasereturns',apaging:'apaging',
+  treasury:'treasury',cashsafes:'cashsafes',bankaccounts:'bankaccounts',treasurytxns:'treasurytxns',treasuryrecon:'treasuryrecon',trsafe:'cashsafes',trbank:'bankaccounts',
+  spperf:'spperf',spperfyear:'spperf',spperfdash:'spperf',pricingexceptions:'spperf',
+  // REV21.2 (A) — EXPENSES module pages (each resolves from its OWN matrix section).
+  expenses:'expenses',expensedetail:'expenses',expensedash:'expensedash',expensereports:'expensereports',expensecategories:'expensecategories',recurringexpenses:'recurringexpenses',
+  // REV21.2 (A) — ADVANCED INVENTORY pages.
+  invmigration:'invmigration',invreports:'invreports',
+  // REV21.2 (A) — PHASE-H MANUFACTURING pages.
+  mfgdashx:'mfgdashx',boms:'boms',bomdetail:'boms',shortages:'shortages',rmreconcilemfg:'rmreconcilemfg',mfgsettings:'mfgsettings',
+  // REV21.2 (A) — SALES WORKSPACE pages.
+  prelim:'prelim',repcollect:'repcollect',myfunds:'myfunds',
+  // REV21.2 (A) — bonus audit is part of the Bonuses section (no separate grant).
+  bonusaudit:'bonuses',
+  reports:'reports',
+  audit:'audit',
+  settings:'settings',
+  notifications:null
+};
+// REV21.2 (A) — Administrator-only nav ids: NEVER grantable to a Custom user (a Custom user is never Administrator).
+// (Users & Access is not even a NAV id here; SystemCheck / Approvals / My Requests / received-cheque sync are diagnostics/workflow.)
+const NAV_ADMIN_ONLY=new Set(['approvals','myrequests','systemcheck','recvchequesync','tombstones','clouddiag','chequedatesync','commsim','commdiag']);
+// REV21.2 (A) — always-allowed utility nav ids for any signed-in user.
+const NAV_UTILITY=new Set(['notifications']);
+// REV21.2 (A) — authoritative categorization used by BOTH the runtime gate and the machine coverage test.
+// Every final NAV id MUST resolve to exactly one of: 'section:<key>' | 'admin_only' | 'utility'. 'uncategorized' fails the test.
+function navCategory(id){
+  if(NAV_UTILITY.has(id))return 'utility';
+  if(NAV_ADMIN_ONLY.has(id))return 'admin_only';
+  if(Object.prototype.hasOwnProperty.call(PAGE_SECTION,id)){ const s=PAGE_SECTION[id]; return (s===null)?'utility':('section:'+s); }
+  return 'uncategorized';
+}
+function customNavAllowed(id){
+  // REV21.2 (A) — a Custom user resolves EVERY nav id from its OWN matrix section (no role wrappers, no bleed).
+  const c=navCategory(id);
+  if(c==='utility')return true;
+  if(c==='admin_only')return false;            // Custom is never Administrator → hidden
+  if(c.slice(0,8)==='section:')return hasPerm(c.slice(8),'view');
+  return false;                                // uncategorized → default deny (fail closed)
+}
+// project the matrix onto the legacy capability-flag vocabulary so EXISTING can()/action guards work for Custom users
+function customFlags(){
+  const f={}; for(const k in FULL_PERMS)f[k]=false;
+  const H=(s,a)=>hasPerm(s,a);
+  // REV21.1 (#5) — NO generic cross-section flags. f.edit stays FALSE; canEdit() is section-aware per current page.
+  f.seeAll=!(sectionScope('customers')==='own'||sectionScope('invoices')==='own'||sectionScope('collections')==='own'||sectionScope('ar')==='own'||sectionScope('cheques')==='own'||sectionScope('returns')==='own');
+  f.rules=H('settings','edit');
+  f.createInvoice=H('invoices','create'); f.editInvoice=H('invoices','edit'); f.confirmInvoice=H('invoices','confirm'); f.cancelInvoice=H('invoices','reverse');
+  f.viewReturns=H('returns','view'); f.createReturn=H('returns','create'); f.confirmReturn=H('returns','confirm'); f.cancelReturn=H('returns','reverse'); f.returnFinancial=H('returns','create')||H('returns','confirm');
+  f.viewInventory=H('inventory','view')||H('catalog','view'); f.editProducts=H('catalog','create')||H('catalog','edit'); f.exportMovements=H('inventory','export')||H('catalog','export');
+  f.viewWarehouses=H('warehouses','view'); f.editWarehouses=H('warehouses','edit'); f.stockTransfer=H('transfers','create');
+  f.viewManufacturing=H('mfgdash','view')||H('fabricorders','view')||H('rawmaterials','view'); f.viewPurchasing=H('purchasing','view'); f.editPurchasing=H('purchasing','create'); f.viewMfgReports=H('mfgdash','view');
+  f.viewAccounting=H('accounting','view')||H('coa','view')||H('ledger','view');
+  f.viewAP=H('ap','view')||H('purchaseinvoices','view'); f.editAP=H('purchaseinvoices','edit');
+  f.viewTreasury=H('treasury','view')||H('cashsafes','view')||H('bankaccounts','view'); f.editTreasury=H('cashsafes','edit')||H('bankaccounts','edit');
+  f.viewHR=H('hrdash','view')||H('employees','view'); f.manageEmployees=H('employees','edit'); f.viewAttendance=H('attendance','view'); f.importFingerprint=H('fingerprint','view'); f.viewPayroll=H('payroll','view'); f.manageHRMasters=H('employees','edit'); f.manageAttendanceSettings=H('hrsettings','edit');
+  return f;
+}
 function perms(){
   if(authRequired()&&SESSION){const r=currentUserRole;
+    if(r==='Custom')return customFlags();   // REV21 — the per-user matrix is the authority for Custom users
     if(r==='Administrator')return {...FULL_PERMS};
     if(r==='Finance Manager')return {...FULL_PERMS};
     // Phase D roles — HR Manager & Attendance Operator (D36). HR Manager: full HR/attendance + payroll authoring,
@@ -13428,7 +13550,25 @@ function perms(){
   return {...FULL_PERMS}; // demo / local / no-auth
 }
 function can(k){return !!perms()[k];}
-function canEdit(){return perms().edit;}
+// REV21.1 (#5) — for a Custom user, generic canEdit() is SECTION-SPECIFIC: it reflects create/edit permission for
+// the CURRENT page's section only, so a grant in one section never unlocks edit UI in an unrelated section.
+// Legacy roles are unchanged (their role-wide edit flag).
+// REV21.2 (B) — canonical per-(section,action) authority. For a Custom user the matrix is the SOLE truth and the
+// EXACT action is checked (create ≠ edit ≠ confirm ≠ reverse ≠ export). Legacy/Administrator/demo keep their prior gate,
+// supplied by the caller as `legacyOk` (defaults to true, i.e. unchanged, for controls that were previously always shown).
+function canAction(section,action,legacyOk){
+  if(!(typeof authRequired==='function'&&authRequired()&&SESSION))return true;   // local / demo → full
+  if(currentUserRole==='Administrator')return true;                              // Administrator bypass
+  if(currentUserRole==='Custom')return hasPerm(section,action);                  // EXACT action from the per-user matrix
+  return (legacyOk===undefined)?true:!!legacyOk;                                 // legacy roles: behavior unchanged
+}
+// REV21.2 (B) — for a Custom user, generic canEdit() means EDIT ONLY (never create). A create-only user must NOT get edit
+// UI, and an edit-only user must NOT get create UI (create controls use canAction(section,'create')). This is the fix for
+// the earlier "edit = section.edit OR section.create" conflation. Legacy roles keep their role-wide edit flag unchanged.
+function canEdit(){
+  if(currentUserRole==='Custom'){ try{ const sec=(typeof PAGE_SECTION!=='undefined')?PAGE_SECTION[ROUTE&&ROUTE.page]:null; if(!sec)return false; return hasPerm(sec,'edit'); }catch(e){ return false; } }
+  return perms().edit;
+}
 // v3.26.1 (Scope D) — Product Cost visibility / editability. Cost is a sensitive financial figure: for the
 // Inventory-User role it is gated by Settings → Inventory / Warehouse Access (both toggles default OFF). Edit implies
 // View; an invalid Edit-ON + View-OFF combination resolves to hidden. Every OTHER role keeps its existing behaviour.
@@ -13438,7 +13578,8 @@ function canViewProductCost(){ try{ if(!(authRequired()&&SESSION))return true; i
 function canEditProductCost(){ try{ if(!(authRequired()&&SESSION))return true; if(currentUserRole==='Inventory User')return invAccessCfg().edit; return true; }catch(e){ return true; } }
 // v3.4 — the Admin Audit Log is visible to the Administrator in cloud mode; in local/demo mode (no cloud
 // auth) it is visible so the operator can review activity. Non-admin cloud roles never see the full log.
-function canViewAudit(){ if(typeof authRequired==='function'&&authRequired()){ return currentUserRole==='Administrator'; } return true; }
+// REV21.1 (#7) — Custom users with audit:view may view the Audit Log (server RLS enforces the same); else Administrator-only.
+function canViewAudit(){ if(typeof authRequired==='function'&&authRequired()){ return currentUserRole==='Administrator'||(currentUserRole==='Custom'&&hasPerm('audit','view')); } return true; }
 function canRules(){return perms().rules;}
 // v3.1 Change 1 — the safe posted-invoice edit is reserved for the Administrator role only.
 // With login enabled, ONLY 'Administrator' qualifies (Finance Manager/Accountant/Sales/Viewer do not).
@@ -13447,6 +13588,8 @@ function isAdmin(){return (authRequired()&&SESSION)?(currentUserRole==='Administ
 function requirePerm(k,label){if(can(k))return true;toast('Not permitted','Your role ('+(currentUserRole||'Viewer')+') cannot '+(label||k),'warn');return false;}
 function inScope(salespersonId){return !SCOPE||salespersonId===SCOPE;}
 function navAllowed(id){const p=perms();
+  // REV21 — a Custom user is gated ENTIRELY by their per-user matrix (default-deny for unmapped pages).
+  if(currentUserRole==='Custom')return customNavAllowed(id);
   // v3.23 — Approvals Center is Administrator-only; the Notifications inbox is for any signed-in user; My Requests is for
   // the requester (AR Accountant) and admins. These are checked before the role branches below.
   if(id==='approvals')return isAdmin();
@@ -13557,6 +13700,7 @@ async function afterLogin(){
   let ok=true;
   if(secureMode()){try{ok=await secureLoad();}catch(e){ok=false;toast('Load failed',e.message,'err');}}
   else{await cloudPull(true);resolveRole();}   // blob mode resolves role from users list
+  try{ await loadMyPermissions(); }catch(_){}   // REV21 — ensure the per-user matrix is loaded before entering the app
   // Inventory User + failed required catalog load → keep the gate, do NOT navigate or claim "Signed in"
   if(isInventoryUserSecure() && ok===false){ iwShowCatalogGate(); return; }
   iwProceedIntoApp();
@@ -13854,7 +13998,30 @@ function _printDesc(desc,asPdf){
 }
 /* ---- dropdown UI ---- */
 const _FMT_LABEL={excel:'&#128202; Excel (.xlsx)',csv:'&#128196; CSV (.csv)',pdf:'&#128424; PDF',print:'&#128438; Print'};
+// REV21.2 (C) — authoritative export provider → permission section. A Custom user may export ONLY where they hold that
+// section's :export action. Every providerKey passed to exportBtn()/doExport() must appear here; an unmapped provider
+// cannot be gated correctly, so it is REFUSED for a Custom user (fail closed) rather than leaked.
+const EXPORT_SECTION={
+  customers:'customers', statement:'customers', ar:'ar', invoices:'invoices', returns:'returns',
+  collections:'collections', cheques:'cheques',
+  movements:'inventory', stock:'inventory', invvaluation:'invreports',
+  commission_basic:'commissions', commission_custom:'commissions', reps:'reps', bonus:'bonuses',
+  report:'reports',
+  expenses:'expenses', expensepayments:'expenses',
+  goodsreceipts:'purchasing', purchaseorders:'purchasing', purchaserequests:'purchasing',
+  rmreconcile:'rawmaterials', rmreconcilemfg:'rmreconcilemfg', shortages:'shortages', boms:'boms'
+};
+// true if the current user may export the given provider. Legacy/Administrator/demo: unchanged (always true here — their
+// existing per-page gates still apply). Custom: EXACTLY the mapped section's :export action; unmapped provider → refuse.
+function canExport(providerKey){
+  if(!(typeof authRequired==='function'&&authRequired()&&SESSION))return true;
+  if(currentUserRole==='Administrator')return true;
+  if(currentUserRole!=='Custom')return true;                 // legacy roles keep their existing page-level gates
+  const sec=EXPORT_SECTION[providerKey];
+  return sec?hasPerm(sec,'export'):false;                     // fail closed for an unmapped provider
+}
 function exportBtn(providerKey,formats){
+  if(currentUserRole==='Custom' && !canExport(providerKey))return '';   // REV21.2 (C) — no :export for this section → no button
   formats=formats||['excel','csv','pdf','print'];
   return `<div class="exp-wrap"><button class="btn exp-btn" onclick="toggleExpMenu(this,event)">&#8681; <span data-i18n="Export">Export</span> &#9662;</button>`+
     `<div class="exp-menu">${formats.map(f=>`<div class="exp-item" onclick="doExport('${providerKey}','${f}')">${_FMT_LABEL[f]}</div>`).join('')}</div></div>`;
@@ -13864,6 +14031,8 @@ function closeExpMenus(){document.querySelectorAll('.exp-wrap.open').forEach(w=>
 document.addEventListener('click',e=>{if(!e.target.closest('.exp-wrap'))closeExpMenus();});
 function doExport(key,fmt){
   closeExpMenus();
+  // REV21.2 (C) — a direct doExport() call (e.g. from DevTools) is refused unless the Custom user holds section:export.
+  if(currentUserRole==='Custom' && !canExport(key)){ toast(t('Not permitted'), t('You do not have export permission for this section'),'warn'); return; }
   const prov=EXPORT_PROVIDERS[key];
   if(!prov){toast('Export unavailable','No exporter for this report','err');return;}
   let desc;try{desc=prov();}catch(e){console.error(e);toast('Export failed',e.message||'Could not read the report','err');return;}
@@ -14386,7 +14555,8 @@ function apDueFromTerms(dateStr,terms){const d=apDateParse(dateStr);if(!d||terms
 function apTaxRow(idPrefix,val){ if(!apConfig().taxEnabled)return ''; return `<div class="form-row"><label>${esc(t('Tax Amount (included)'))} <span class="muted">(${esc(t('optional'))})</span></label><input type="number" id="${idPrefix}_tax" min="0" value="${val||''}" placeholder="0"></div>`; }
 // ---- Normal purchase invoice form (Draft → Confirm). Total-only now; item lines extend later. ----
 function openPurchaseInvoiceForm(id){
-  if(!requirePerm('createPurchaseInvoice','create purchase invoices'))return;
+  // REV21.2 (B) — exact action: NEW purchase invoice needs purchaseinvoices:create; EDIT (existing draft) needs :edit.
+  if(!apCanWrite(id?'editPurchaseDraft':'createPurchaseInvoice')){ toast(t('Not permitted'), t(id?'You cannot edit purchase invoices':'You cannot create purchase invoices'),'warn'); return; }
   if(!activeSuppliersExist()){toast(t('No suppliers'),t('Add a supplier first (Suppliers → + Add)'),'warn');return;}
   _hsPending.pinv=null;
   const p=id?pinvById(id):null;
@@ -14410,6 +14580,8 @@ function openPurchaseInvoiceForm(id){
 function piSyncDue(){const t=document.getElementById('pi_terms').value;if(t==='')return;const d=document.getElementById('pi_date').value;const due=apDueFromTerms(d,t);const el=document.getElementById('pi_due');if(el&&due)el.value=due;}
 function activeSuppliersExist(){return (DB.suppliers||[]).some(s=>s.active!==false);}
 async function savePurchaseInvoice(confirmNow,id){
+  // REV21.2 (B) — exact action guard (server RLS is authoritative): create vs edit resolves from the matrix for Custom.
+  if(!apCanWrite(id?'editPurchaseDraft':'createPurchaseInvoice')){ toast(t('Not permitted'), t(id?'You cannot edit purchase invoices':'You cannot create purchase invoices'),'warn'); return; }
   if(_hsBusy.pinv)return;
   const g=x=>document.getElementById(x);
   const supplierId=+g('pi_sup').value, total=round(+g('pi_total').value||0,2);
@@ -14783,7 +14955,14 @@ let apInvState={search:'',status:'',supplier:'',pay:''};
 let apPayState={search:'',supplier:''};
 let apRetState={search:'',status:'',supplier:''};
 let apStmtState={from:'',to:'',type:'',status:''};
-function apCanWrite(k){return can(k);}
+// REV21.2 (B) — for a Custom user, AP write capability flags resolve from the EXACT matrix action (create ≠ edit).
+// Purchase-invoice create → purchaseinvoices:create; editing/confirming/cancelling a PI is an UPDATE → purchaseinvoices:edit
+// (purchase invoices have no separate status-transition RLS, so confirm/cancel are 'edit' server-side). Legacy roles unchanged.
+const AP_FLAG_MATRIX={createPurchaseInvoice:['purchaseinvoices','create'],editPurchaseDraft:['purchaseinvoices','edit'],confirmPurchaseInvoice:['purchaseinvoices','edit'],cancelPurchaseInvoice:['purchaseinvoices','edit'],recordSupplierPayment:['supplierpayments','create'],recordPurchaseReturn:['purchasereturns','create']};
+function apCanWrite(k){
+  if(currentUserRole==='Custom'){ const m=AP_FLAG_MATRIX[k]; return m?hasPerm(m[0],m[1]):false; }   // fail closed for unmapped AP flags
+  return can(k);
+}
 function supStatementCard(sid){ const s=supplierById(sid); const a=supplierAP(sid);
   return `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
     <div class="kpi accent-red" style="padding:12px"><span class="k-label">${esc(t('Outstanding Payable'))}</span><div class="k-val" style="font-size:20px;margin-top:6px">${egp(a.outstanding)}</div><div class="sm muted">${esc(t('computed — reconciles to statement'))}</div></div>
@@ -20570,6 +20749,15 @@ if(typeof perms==='function'){ const __permsBase=perms; perms=function(){ const 
   if(r==='Administrator'||r==='Finance Manager')return {...base,...EXP_PERMS_ALL};
   if(r==='Accountant')return {...base,...EXP_PERMS_OPS};
   if(r==='Sales Manager'||r==='Viewer')return {...base,...EXP_PERMS_VIEW};
+  // REV21.3 (blocker 1) — a Custom user's Expenses capabilities come from the EXACT per-user matrix, not EXP_PERMS_NONE.
+  // create≠edit is preserved (separate flags). approve/pay/reverse/submit are NOT in the Custom matrix → stay FALSE.
+  // Category create vs edit and recurring create vs edit are gated EXACTLY at the buttons via canAction() (a single
+  // manageExpenseCategories flag cannot express create≠edit); the flag here only opens the management surface.
+  if(r==='Custom'){ const H=(s,a)=>((typeof hasPerm==='function')?hasPerm(s,a):false); return {...base,
+    viewExpenses:H('expenses','view'), createExpenses:H('expenses','create'), editExpenses:H('expenses','edit'),
+    submitExpenses:false, approveExpenses:false, rejectExpenses:false, payExpenses:false, reverseExpenses:false,
+    viewExpenseReports:(H('expensereports','view')||H('expensedash','view')),
+    manageExpenseCategories:(H('expensecategories','create')||H('expensecategories','edit')) }; }
   return {...base,...EXP_PERMS_NONE}; }; }
 if(typeof navAllowed==='function'){ const __navBase=navAllowed; navAllowed=function(id){
   if(id==='expenses'||id==='expensedetail')return can('viewExpenses');
@@ -21059,7 +21247,7 @@ function expCancel(id){if(!requirePerm('createExpenses','cancel expenses'))retur
 function expReverse(id){if(!requirePerm('reverseExpenses','reverse expenses'))return;const e=expenseById(id);openModal(`<div class="modal-h"><div><h3>&#8635; ${esc(t('Reverse Expense'))}</h3><div class="sub">${esc(e.expenseNo)} · ${egp(e.total)}</div></div><button class="x" data-close>&times;</button></div><div class="modal-b"><div class="section-note" style="border-color:#f3c7c7;background:var(--red-bg);color:var(--red);margin-bottom:10px;font-size:11.5px">${esc(t('Reversal preserves the original expense, payments, treasury transactions and journals, and posts the appropriate reversing entries. Nothing is deleted.'))}</div><div class="form-row full"><label>${esc(t('Reason'))} <span class="req">*</span></label><input id="exp_rev_reason" dir="auto"></div></div><div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn danger" id="exp_rev_go">${esc(t('Reverse'))}</button></div>`);document.getElementById('exp_rev_go').onclick=()=>{const reason=(document.getElementById('exp_rev_reason')||{}).value;if(!reason||!reason.trim()){markInvalid('exp_rev_reason',true);toast(t('A reason is required'),'','warn');return;}const r=reverseExpense(id,reason);if(!r.ok){toast(t('Cannot reverse'),r.error||'','warn');return;}closeModal();FLASH_NEXT=true;go('expensedetail',{id});toast(t('Expense reversed'),'','ok');};}
 // ═══════════════════════════ PAGE — Expense Categories ═══════════════════════════
 PAGES.expensecategories=function(){
-  if(!can('manageExpenseCategories')){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Administrator access required'))}</b></div>`;return;}
+  if(!(can('manageExpenseCategories')||(currentUserRole==='Custom'&&hasPerm('expensecategories','view')))){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Administrator access required'))}</b></div>`;return;}
   const defAcc=(typeof mappingAccount==='function')?mappingAccount('EXPENSE_DEFAULT'):null;
   const payAcc=(typeof mappingAccount==='function')?mappingAccount('EXPENSE_PAYABLE'):null;
   const tops=(DB.expenseCategories||[]).filter(c=>!c.parentId).sort((a,b)=>String(a.code).localeCompare(String(b.code)));
@@ -21069,19 +21257,20 @@ PAGES.expensecategories=function(){
     <td class="muted">${acc?esc(acc.code+' · '+acc.nameEn):('<span class="muted">'+esc(t('(uses default)'))+'</span>')}</td>
     <td class="muted">${cc?esc(cc.code):'—'}</td>
     <td>${c.active===false?`<span class="badge b-gray">${esc(t('Archived'))}</span>`:`<span class="badge b-green">${esc(t('Active'))}</span>`}</td>
-    <td class="num row-act"><button class="icon-act" title="${esc(t('Edit'))}" onclick="openExpenseCategoryForm(${c.id})">&#9998;</button><button class="icon-act" title="${c.active===false?esc(t('Activate')):esc(t('Deactivate'))}" onclick="expCatToggle(${c.id},${c.active===false})">${c.active===false?'&#10003;':'&#128275;'}</button></td></tr>`;};
+    <td class="num row-act">${canAction('expensecategories','edit')?`<button class="icon-act" title="${esc(t('Edit'))}" onclick="openExpenseCategoryForm(${c.id})">&#9998;</button><button class="icon-act" title="${c.active===false?esc(t('Activate')):esc(t('Deactivate'))}" onclick="expCatToggle(${c.id},${c.active===false})">${c.active===false?'&#10003;':'&#128275;'}</button>`:''}</td></tr>`;};
   V.innerHTML=`
   <div class="page-head"><div><p style="margin:0"><span class="link" onclick="go('expenses')">${esc(t('Expenses'))}</span> / ${esc(t('Expense Categories'))}</p><h1 style="margin-top:4px">${esc(t('Expense Categories'))}</h1><p>${esc(t('Configurable categories & subcategories with GL account mapping — no code changes needed'))}</p></div>
-    <div class="ph-actions">${!(DB.expenseCategories||[]).length?`<button class="btn" onclick="expLoadStarter()">${esc(t('Load starter categories'))}</button>`:''}<button class="btn primary" onclick="openExpenseCategoryForm()">+ ${esc(t('Add Category'))}</button></div></div>
+    <div class="ph-actions">${(canAction('expensecategories','create')&&!(DB.expenseCategories||[]).length)?`<button class="btn" onclick="expLoadStarter()">${esc(t('Load starter categories'))}</button>`:''}${canAction('expensecategories','create')?`<button class="btn primary" onclick="openExpenseCategoryForm()">+ ${esc(t('Add Category'))}</button>`:''}</div></div>
   <div class="section-note" style="margin-bottom:12px;font-size:11.5px">${esc(t('Default expense mappings'))}: <b>${esc(t('Operating Expenses'))}</b> → ${defAcc?esc(coaLabel(defAcc)):`<span class="neg">${esc(t('not mapped'))}</span>`} · <b>${esc(t('Expenses Payable'))}</b> → ${payAcc?esc(coaLabel(payAcc)):`<span class="neg">${esc(t('not mapped'))}</span>`}. <span class="link" onclick="go('accounting',{sec:'mappings'})">${esc(t('Edit account mappings'))}</span></div>
   <div class="card"><div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>${esc(t('Code'))}</th><th>${esc(t('English Name'))}</th><th>${esc(t('Arabic Name'))}</th><th>${esc(t('Parent'))}</th><th>${esc(t('Default Account'))}</th><th>${esc(t('Cost Center'))}</th><th>${esc(t('Status'))}</th><th class="num">${esc(t('Actions'))}</th></tr></thead>
     <tbody>${tops.length?tops.map(tp=>rowFor(tp)+(DB.expenseCategories||[]).filter(c=>c.parentId===tp.id).map(rowFor).join('')).join(''):`<tr><td colspan="8"><div class="empty" style="padding:18px"><b>${esc(t('No categories yet'))}</b></div></td></tr>`}</tbody>
   </table></div></div></div>`;
 };
-function expCatToggle(id,active){setExpenseCategoryActive(id,active);go('expensecategories');}
+function expCatToggle(id,active){ if(!canAction('expensecategories','edit')){toast(t('Not permitted'),'','warn');return;} setExpenseCategoryActive(id,active);go('expensecategories');}
 function expLoadStarter(){const r=loadStarterExpenseCategories();if(!r.ok){toast(t('Cannot load'),r.error||'','warn');return;}toast(t('Starter categories loaded'),r.count+' '+t('categories'),'ok');go('expensecategories');}
 function openExpenseCategoryForm(id){
+  if(!canAction('expensecategories', id?'edit':'create')){toast(t('Not permitted'), id?t('You cannot edit categories'):t('You cannot add categories'),'warn');return;}
   const c=id?expenseCategoryById(id):null;
   openModal(`<div class="modal-h"><div><h3>${esc(id?t('Edit Category'):t('Add Category'))}</h3></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b"><div class="form-grid">
@@ -21102,7 +21291,7 @@ function openExpenseCategoryForm(id){
 let expDashState={year:0,month:-1};   // month -1 = whole year
 function expBar(label,value,max,cls){const pct=max>0?Math.max(2,Math.round(value/max*100)):0;return `<div style="margin-bottom:7px"><div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:2px"><span>${esc(label)}</span><b>${egp0(value)}</b></div><div style="background:var(--soft,#eef1f5);border-radius:5px;height:12px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${cls||'var(--blue,#3b82f6)'}"></div></div></div>`;}
 PAGES.expensedash=function(){
-  if(!can('viewExpenses')){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Administrator access required'))}</b></div>`;return;}
+  if(!(can('viewExpenses')||(currentUserRole==='Custom'&&hasPerm('expensedash','view')))){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Administrator access required'))}</b></div>`;return;}
   if(!expDashState.year)expDashState.year=TODAY.getFullYear();
   const yr=expDashState.year, mo=expDashState.month;
   const inSel=e=>{if(e.approvalStatus==='Cancelled'||e.approvalStatus==='Rejected')return false;const k=expMonthKey(e.expenseDate);if(!k)return false;const[y,m]=k.split('-');if(+y!==yr)return false;if(mo>=0&&(+m-1)!==mo)return false;return true;};
@@ -21184,19 +21373,20 @@ PAGES.expensereports=function(){
 
 // ═══════════════════════════ PAGE — Recurring Expense Templates ═══════════════════════════
 PAGES.recurringexpenses=function(){
-  if(!(can('createExpenses')||can('viewExpenses'))){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Administrator access required'))}</b></div>`;return;}
+  if(!(can('createExpenses')||can('viewExpenses')||(currentUserRole==='Custom'&&hasPerm('recurringexpenses','view')))){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Administrator access required'))}</b></div>`;return;}
   const list=(DB.recurringExpenses||[]).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
   V.innerHTML=`
   <div class="page-head"><div><p style="margin:0"><span class="link" onclick="go('expenses')">${esc(t('Expenses'))}</span> / ${esc(t('Recurring Expenses'))}</p><h1 style="margin-top:4px">${esc(t('Recurring Expenses'))}</h1><p>${esc(t('Templates that generate a DRAFT expense on demand — never an automatic financial posting'))}</p></div>
-    <div class="ph-actions">${can('createExpenses')?`<button class="btn primary" onclick="openRecurringForm()">+ ${esc(t('Add Template'))}</button>`:''}</div></div>
+    <div class="ph-actions">${canAction('recurringexpenses','create',can('createExpenses'))?`<button class="btn primary" onclick="openRecurringForm()">+ ${esc(t('Add Template'))}</button>`:''}</div></div>
   <div class="section-note" style="margin-bottom:12px;font-size:11.5px">${esc(t('A template never posts money by itself. Use “Generate draft” to create a Draft expense you then approve and pay under normal controls.'))}</div>
   <div class="card"><div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>${esc(t('Name'))}</th><th>${esc(t('Frequency'))}</th><th>${esc(t('Category'))}</th><th class="num">${esc(t('Expected Amount'))}</th><th>${esc(t('Payee'))}</th><th>${esc(t('Cost Center'))}</th><th>${esc(t('Status'))}</th><th class="num">${esc(t('Actions'))}</th></tr></thead>
     <tbody>${list.length?list.map(r=>`<tr class="${r.active===false?'muted':''}"><td class="t-strong">${esc(r.name)}</td><td>${esc(t(r.frequency||'Monthly'))}</td><td>${esc(expenseCategoryPath(r.categoryId))}</td><td class="num">${egp0(r.amount)}</td><td>${esc(r.supplierId?supName(r.supplierId):(r.payeeName||'—'))}</td><td class="muted">${esc(r.costCenterId?(costCenterById(r.costCenterId)||{}).code:'—')}</td><td>${r.active===false?`<span class="badge b-gray">${esc(t('Archived'))}</span>`:`<span class="badge b-green">${esc(t('Active'))}</span>`}</td>
-      <td class="num row-act">${can('createExpenses')?`<button class="btn sm" onclick="recExpGenerate(${r.id})">${esc(t('Generate draft'))}</button> <button class="icon-act" title="${esc(t('Edit'))}" onclick="openRecurringForm(${r.id})">&#9998;</button>`:''}</td></tr>`).join(''):`<tr><td colspan="8"><div class="empty" style="padding:18px"><b>${esc(t('No recurring templates'))}</b></div></td></tr>`}</tbody>
+      <td class="num row-act">${can('createExpenses')?`<button class="btn sm" onclick="recExpGenerate(${r.id})">${esc(t('Generate draft'))}</button>`:''}${canAction('recurringexpenses','edit',can('createExpenses'))?` <button class="icon-act" title="${esc(t('Edit'))}" onclick="openRecurringForm(${r.id})">&#9998;</button>`:''}</td></tr>`).join(''):`<tr><td colspan="8"><div class="empty" style="padding:18px"><b>${esc(t('No recurring templates'))}</b></div></td></tr>`}</tbody>
   </table></div></div></div>`;
 };
 function openRecurringForm(id){
+  if(!canAction('recurringexpenses', id?'edit':'create', can('createExpenses'))){toast(t('Not permitted'), id?t('You cannot edit templates'):t('You cannot add templates'),'warn');return;}
   const r=id?(DB.recurringExpenses||[]).find(x=>x.id===+id):null;
   openModal(`<div class="modal-h"><div><h3>${esc(id?t('Edit Template'):t('Add Template'))}</h3></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b"><div class="form-grid">
@@ -21216,7 +21406,7 @@ function openRecurringForm(id){
     else{DB.seqRecurringExpense=(DB.seqRecurringExpense||0)+1;const row={id:DB.seqRecurringExpense,name,frequency:g('rx_freq').value,categoryId:+cat,amount:round(+g('rx_amt').value||0,2),payeeName:g('rx_payee').value.trim(),supplierId:null,costCenterId:g('rx_cc').value||null,department:'',method:'',cashSafeId:null,bankAccountId:null,active:true,startDate:g('rx_start').value,endDate:g('rx_end').value,lastGenerated:'',notes:g('rx_notes').value.trim(),createdBy:auditUser(),createdAt:nowStampSec()};DB.recurringExpenses.push(row);r=row;}
     if(typeof securePush==='function')securePush('recexp',r);persist();logAudit(id?'Recurring Expense Updated':'Recurring Expense Created','RecurringExpense',r.id,name,{});closeModal();go('recurringexpenses');toast(t('Template saved'),'','ok');};
 }
-function recExpGenerate(id){const r=(DB.recurringExpenses||[]).find(x=>x.id===+id);if(!r)return;if(!requirePerm('createExpenses','create expenses'))return;const res=createExpense({expenseDate:dateToInput(TODAY),categoryId:r.categoryId,amount:r.amount,description:r.name,payeeName:r.payeeName,costCenterId:r.costCenterId,department:r.department,notes:t('Generated from recurring template')+': '+r.name});if(!res.ok){toast(t('Cannot generate'),res.error,'warn');return;}r.lastGenerated=nowStampSec();if(typeof securePush==='function')securePush('recexp',r);persist();go('expensedetail',{id:res.expense.id});toast(t('Draft expense created'),res.expense.expenseNo,'ok');}
+function recExpGenerate(id){const r=(DB.recurringExpenses||[]).find(x=>x.id===+id);if(!r)return;if(!can('createExpenses')){toast(t('Not permitted'),t('You cannot create expenses'),'warn');return;}const res=createExpense({expenseDate:dateToInput(TODAY),categoryId:r.categoryId,amount:r.amount,description:r.name,payeeName:r.payeeName,costCenterId:r.costCenterId,department:r.department,notes:t('Generated from recurring template')+': '+r.name});if(!res.ok){toast(t('Cannot generate'),res.error,'warn');return;}r.lastGenerated=nowStampSec();if(typeof securePush==='function')securePush('recexp',r);persist();go('expensedetail',{id:res.expense.id});toast(t('Draft expense created'),res.expense.expenseNo,'ok');}
 
 // ═══════════════════════════ Excel/CSV export providers ═══════════════════════════
 Object.assign(EXPORT_PROVIDERS,{
@@ -22275,8 +22465,9 @@ function mfgCfgSave(kind,seqKey,o){ const c=mfgCfg(); c[kind]=c[kind]||[];
   if(o.id){ const it=c[kind].find(x=>+x.id===+o.id); if(!it)return {ok:false,error:'Not found'}; Object.assign(it,o); logMfgAudit('Manufacturing Config Edited',kind,it.id,it.code||it.nameEn,{kind}); }
   else{ c[seqKey]=(c[seqKey]||0)+1; o.id=c[seqKey]; o.active=(o.active!==false); c[kind].push(o); logMfgAudit('Manufacturing Config Added',kind,o.id,o.code||o.nameEn,{kind}); }
   if(typeof persist==='function')persist(); return {ok:true,item:o}; }
-function mfgCfgToggle(kind,id){ const it=mfgItem(kind,id); if(!it)return; it.active=!(it.active!==false); logMfgAudit('Manufacturing Config Toggled',kind,it.id,it.code||it.nameEn,{active:it.active}); if(typeof persist==='function')persist(); }
+function mfgCfgToggle(kind,id){ if(typeof mfgCanEdit==='function'&&!mfgCanEdit()){toast(t('Not permitted'),'','warn');return;} const it=mfgItem(kind,id); if(!it)return; it.active=!(it.active!==false); logMfgAudit('Manufacturing Config Toggled',kind,it.id,it.code||it.nameEn,{active:it.active}); if(typeof persist==='function')persist(); }
 function mfgCfgSetting(path,value){ // dotted path e.g. 'tolerance.overPct'
+  if(typeof mfgCanEdit==='function'&&!mfgCanEdit()){toast(t('Not permitted'),'','warn');return;}   // REV21.4 (issue 1) defense-in-depth
   const c=mfgCfg(); const parts=path.split('.'); let o=c; for(let i=0;i<parts.length-1;i++){ o[parts[i]]=o[parts[i]]||{}; o=o[parts[i]]; } o[parts[parts.length-1]]=value;
   logMfgAudit('Manufacturing Setting Changed','mfgSettings',0,path,{path,value}); if(typeof persist==='function')persist(); }
 
@@ -22305,11 +22496,11 @@ function mhUnlock(key){ _mhBusy[key]=false; }
 // so the whole perpetual-inventory system shares one activation date (no second GL, fixes the H0 "dormant switch").
 function mfgAcctActive(dateStr){ const a=mfgCfg().accounting||{}; if(!a.enabled||!a.effectiveFrom)return false;
   const d=(''+(dateStr||dateToInput(TODAY))).slice(0,10); return d>=(''+a.effectiveFrom).slice(0,10); }
-function mfgAcctActivate(effectiveFrom){ const c=mfgCfg(); c.accounting=c.accounting||{}; c.accounting.enabled=true; c.accounting.effectiveFrom=effectiveFrom||dateToInput(TODAY);
+function mfgAcctActivate(effectiveFrom){ if(!can('manageManufacturingAccounting')){toast(t('Not permitted'),'','warn');return {ok:false,error:'not permitted'};} const c=mfgCfg(); c.accounting=c.accounting||{}; c.accounting.enabled=true; c.accounting.effectiveFrom=effectiveFrom||dateToInput(TODAY);
   try{ DB.acctConfig=DB.acctConfig||{}; if(!DB.acctConfig.perpetualFrom)DB.acctConfig.perpetualFrom=c.accounting.effectiveFrom;
     if(DB.acctConfig.enabled==null)DB.acctConfig.enabled=true; }catch(e){}
   logMfgAudit('Manufacturing Accounting Activated','mfgSettings',0,c.accounting.effectiveFrom,{effectiveFrom:c.accounting.effectiveFrom}); if(typeof persist==='function')persist(); return {ok:true}; }
-function mfgAcctDeactivate(){ const c=mfgCfg(); c.accounting=c.accounting||{}; c.accounting.enabled=false; logMfgAudit('Manufacturing Accounting Deactivated','mfgSettings',0,'',{}); if(typeof persist==='function')persist(); return {ok:true}; }
+function mfgAcctDeactivate(){ if(!can('manageManufacturingAccounting')){toast(t('Not permitted'),'','warn');return {ok:false,error:'not permitted'};} const c=mfgCfg(); c.accounting=c.accounting||{}; c.accounting.enabled=false; logMfgAudit('Manufacturing Accounting Deactivated','mfgSettings',0,'',{}); if(typeof persist==='function')persist(); return {ok:true}; }
 // ═══════════════════════════ BOM MASTER + VERSIONING + REQUIREMENTS (H11–H19) ═══════════════════════════
 // A BOM is the material recipe for a product/style. It is VERSIONED and effective-dated: editing an Active
 // BOM's materials is done by creating a NEW VERSION — historical production keeps its own snapshot.
@@ -22627,14 +22818,18 @@ function hShortBadge(st){ const map={'AVAILABLE':'b-green','PARTIAL':'b-amber','
 function hBomBadge(st){ const map={'Draft':'b-slate','Active':'b-green','Inactive':'b-gray','Superseded':'b-amber'}; return `<span class="badge ${map[st]||'b-slate'}">${esc(t(st))}</span>`; }
 
 // ═══════════════════════════ MANUFACTURING CONFIGURATION CENTER (H1) ═══════════════════════════
+// REV21.4 (issue 1) — Manufacturing Settings EDIT authority. For a Custom user this is the EXACT matrix action
+// mfgsettings:edit (a mfgsettings:view user sees the page but zero mutation controls). Legacy: manageManufacturingSettings.
+function mfgCanEdit(){ return canAction('mfgsettings','edit',(typeof can==='function')?can('manageManufacturingSettings'):true); }
 PAGES.mfgsettings=function(){
-  if(!can('manageManufacturingSettings')&&!can('configureProductionFields')){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Not permitted'))}</b></div>`;return;}
+  if(!can('manageManufacturingSettings')&&!can('configureProductionFields')&&!(currentUserRole==='Custom'&&hasPerm('mfgsettings','view'))){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Not permitted'))}</b></div>`;return;}
+  const canW=mfgCanEdit();   // REV21.4 — gate every mutation control; view-only sees read-only page
   const c=mfgCfg(); const acct=c.accounting||{};
   const cfgTable=(kind,seqKey,cols,extra)=>{ const rows=mfgList(kind);
-    return `<div class="card row-gap"><div class="card-h"><h3 style="font-size:13px">${esc(t(cols.title))}</h3><button class="btn sm primary" onclick="openMfgCfgForm('${kind}','${seqKey}')">+ ${esc(t('Add'))}</button></div>
+    return `<div class="card row-gap"><div class="card-h"><h3 style="font-size:13px">${esc(t(cols.title))}</h3>${canW?`<button class="btn sm primary" onclick="openMfgCfgForm('${kind}','${seqKey}')">+ ${esc(t('Add'))}</button>`:''}</div>
     <div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('Code'))}</th><th>${esc(t('Name (EN)'))}</th><th>${esc(t('Name (AR)'))}</th>${(extra||[]).map(e=>`<th>${esc(t(e.label))}</th>`).join('')}<th>${esc(t('Active'))}</th><th></th></tr></thead><tbody>
     ${rows.map(r=>`<tr><td class="t-strong">${esc(r.code||'')}</td><td>${esc(r.nameEn||'')}</td><td dir="rtl">${esc(r.nameAr||'')}</td>${(extra||[]).map(e=>`<td>${r[e.key]?'✓':'—'}</td>`).join('')}<td>${r.active!==false?`<span class="badge b-green">${esc(t('Active'))}</span>`:`<span class="badge b-gray">${esc(t('Inactive'))}</span>`}</td>
-      <td><button class="btn sm" onclick="openMfgCfgForm('${kind}','${seqKey}',${r.id})">${esc(t('Edit'))}</button> <button class="btn sm" onclick="mfgCfgToggle('${kind}',${r.id});go('mfgsettings')">${r.active!==false?esc(t('Disable')):esc(t('Enable'))}</button></td></tr>`).join('')||`<tr><td colspan="7"><div class="empty" style="padding:12px"><b>${esc(t('None yet'))}</b></div></td></tr>`}
+      <td>${canW?`<button class="btn sm" onclick="openMfgCfgForm('${kind}','${seqKey}',${r.id})">${esc(t('Edit'))}</button> <button class="btn sm" onclick="mfgCfgToggle('${kind}',${r.id});go('mfgsettings')">${r.active!==false?esc(t('Disable')):esc(t('Enable'))}</button>`:''}</td></tr>`).join('')||`<tr><td colspan="7"><div class="empty" style="padding:12px"><b>${esc(t('None yet'))}</b></div></td></tr>`}
     </tbody></table></div></div></div>`; };
   V.innerHTML=`<div class="page-head"><div><h1>${esc(t('Manufacturing Settings'))} <span class="no-i18n" style="font-size:14px;color:var(--ink2)">إعدادات التصنيع</span></h1><p>${esc(t('Configurable production rules — no code change needed. Financially relevant configuration is snapshotted onto documents.'))}</p></div>
     <div class="ph-actions"><button class="btn" onclick="go('mfgdashx')">&#128200; ${esc(t('Dashboard'))}</button></div></div>
@@ -22642,16 +22837,16 @@ PAGES.mfgsettings=function(){
   ${cfgTable('wasteCategories','seqWasteCat',{title:'Waste Categories'})}
   ${cfgTable('qcDispositions','seqQcDisp',{title:'QC Dispositions'},[{label:'Allows Packing',key:'allowsPacking'},{label:'Rework',key:'requiresRework'},{label:'Scrap',key:'isScrap'},{label:'Hold',key:'isHold'}])}
   <div class="card row-gap"><div class="card-h"><h3 style="font-size:13px">${esc(t('Production Tolerances & Behavior'))}</h3></div><div class="card-b"><div class="form-grid">
-    <div class="form-row"><label>${esc(t('Over-production tolerance %'))}</label><input type="number" step="0.1" id="cfg_over" value="${esc(c.tolerance.overPct)}" onchange="mfgCfgSetting('tolerance.overPct',+this.value||0)"></div>
-    <div class="form-row"><label>${esc(t('Under-production tolerance %'))}</label><input type="number" step="0.1" id="cfg_under" value="${esc(c.tolerance.underPct)}" onchange="mfgCfgSetting('tolerance.underPct',+this.value||0)"></div>
-    <div class="form-row"><label>${esc(t('Over-tolerance needs approval'))}</label><select onchange="mfgCfgSetting('tolerance.requireApprovalOverTolerance',this.value==='yes')"><option value="no" ${!c.tolerance.requireApprovalOverTolerance?'selected':''}>${esc(t('No'))}</option><option value="yes" ${c.tolerance.requireApprovalOverTolerance?'selected':''}>${esc(t('Yes'))}</option></select></div>
-    <div class="form-row"><label>${esc(t('Completion mode'))}</label><select onchange="mfgCfgSetting('completion.mode',this.value)"><option value="confirm" ${c.completion.mode==='confirm'?'selected':''}>${esc(t('Require confirmation'))}</option><option value="auto" ${c.completion.mode==='auto'?'selected':''}>${esc(t('Auto-complete'))}</option></select></div>
-    <div class="form-row"><label>${esc(t('Shortage behavior'))}</label><select onchange="mfgCfgSetting('shortage.behavior',this.value)">${['warn','block','off'].map(x=>`<option value="${x}" ${c.shortage.behavior===x?'selected':''}>${esc(t(x))}</option>`).join('')}</select></div>
-    <div class="form-row"><label>${esc(t('Purchase Request suggestion'))}</label><select onchange="mfgCfgSetting('prSuggest',this.value)">${['suggest','disabled'].map(x=>`<option value="${x}" ${c.prSuggest===x?'selected':''}>${esc(t(x))}</option>`).join('')}</select></div>
-    <div class="form-row"><label>${esc(t('Waste default mode'))}</label><select onchange="mfgCfgSetting('wasteDefaultMode',this.value)"><option value="wip" ${c.wasteDefaultMode==='wip'?'selected':''}>${esc(t('Post-consumption (no re-decrement)'))}</option><option value="stock" ${c.wasteDefaultMode==='stock'?'selected':''}>${esc(t('Issue from stock'))}</option></select></div>
+    <div class="form-row"><label>${esc(t('Over-production tolerance %'))}</label><input type="number" step="0.1" id="cfg_over" ${canW?'':'disabled'} value="${esc(c.tolerance.overPct)}" onchange="mfgCfgSetting('tolerance.overPct',+this.value||0)"></div>
+    <div class="form-row"><label>${esc(t('Under-production tolerance %'))}</label><input type="number" step="0.1" id="cfg_under" ${canW?'':'disabled'} value="${esc(c.tolerance.underPct)}" onchange="mfgCfgSetting('tolerance.underPct',+this.value||0)"></div>
+    <div class="form-row"><label>${esc(t('Over-tolerance needs approval'))}</label><select ${canW?'':'disabled'} onchange="mfgCfgSetting('tolerance.requireApprovalOverTolerance',this.value==='yes')"><option value="no" ${!c.tolerance.requireApprovalOverTolerance?'selected':''}>${esc(t('No'))}</option><option value="yes" ${c.tolerance.requireApprovalOverTolerance?'selected':''}>${esc(t('Yes'))}</option></select></div>
+    <div class="form-row"><label>${esc(t('Completion mode'))}</label><select ${canW?'':'disabled'} onchange="mfgCfgSetting('completion.mode',this.value)"><option value="confirm" ${c.completion.mode==='confirm'?'selected':''}>${esc(t('Require confirmation'))}</option><option value="auto" ${c.completion.mode==='auto'?'selected':''}>${esc(t('Auto-complete'))}</option></select></div>
+    <div class="form-row"><label>${esc(t('Shortage behavior'))}</label><select ${canW?'':'disabled'} onchange="mfgCfgSetting('shortage.behavior',this.value)">${['warn','block','off'].map(x=>`<option value="${x}" ${c.shortage.behavior===x?'selected':''}>${esc(t(x))}</option>`).join('')}</select></div>
+    <div class="form-row"><label>${esc(t('Purchase Request suggestion'))}</label><select ${canW?'':'disabled'} onchange="mfgCfgSetting('prSuggest',this.value)">${['suggest','disabled'].map(x=>`<option value="${x}" ${c.prSuggest===x?'selected':''}>${esc(t(x))}</option>`).join('')}</select></div>
+    <div class="form-row"><label>${esc(t('Waste default mode'))}</label><select ${canW?'':'disabled'} onchange="mfgCfgSetting('wasteDefaultMode',this.value)"><option value="wip" ${c.wasteDefaultMode==='wip'?'selected':''}>${esc(t('Post-consumption (no re-decrement)'))}</option><option value="stock" ${c.wasteDefaultMode==='stock'?'selected':''}>${esc(t('Issue from stock'))}</option></select></div>
   </div></div></div>
   <div class="card row-gap"><div class="card-h"><h3 style="font-size:13px">${esc(t('Default Warehouses'))}</h3></div><div class="card-b"><div class="section-note" style="font-size:11px">${esc(t('Resolved by canonical warehouse ID — never assumes "Main".'))}</div><div class="form-grid">
-    ${[['rm','Raw Materials Warehouse'],['wip','WIP Warehouse'],['fg','Finished Goods Warehouse'],['scrap','Scrap / Waste Warehouse'],['ret','Return Warehouse']].map(([k,lbl])=>`<div class="form-row"><label>${esc(t(lbl))}</label><select onchange="mfgCfgSetting('warehouses.${k}',+this.value||null)">${hWhOpts((c.warehouses||{})[k])}</select></div>`).join('')}
+    ${[['rm','Raw Materials Warehouse'],['wip','WIP Warehouse'],['fg','Finished Goods Warehouse'],['scrap','Scrap / Waste Warehouse'],['ret','Return Warehouse']].map(([k,lbl])=>`<div class="form-row"><label>${esc(t(lbl))}</label><select ${canW?'':'disabled'} onchange="mfgCfgSetting('warehouses.${k}',+this.value||null)">${hWhOpts((c.warehouses||{})[k])}</select></div>`).join('')}
   </div></div></div>
   <div class="card row-gap"><div class="card-h"><h3 style="font-size:13px">${esc(t('Manufacturing Accounting'))}</h3></div><div class="card-b">
     <div class="section-note" style="font-size:11px;${mfgAcctActive()?'border-color:#a9d6a9;background:var(--green-bg,#eef8ee)':''}">${mfgAcctActive()?`<b>${esc(t('Manufacturing perpetual accounting is ACTIVE.'))}</b> ${esc(t('Effective from'))} ${esc(acct.effectiveFrom||'')}. ${esc(t('Consumption posts Dr WIP / Cr Raw Materials; production completion posts Dr Finished Goods / Cr WIP (material cost only). Forward-only.'))}`:esc(t('Manufacturing perpetual accounting is OFF. Stock movements still occur; no GL is posted. Activation is explicit, effective-dated and forward-only (material cost only — labor & overhead are Phase I).'))}</div>
@@ -22665,6 +22860,7 @@ PAGES.mfgsettings=function(){
   </div></div>`;
 };
 function openMfgCfgForm(kind,seqKey,id){
+  if(!mfgCanEdit()){toast(t('Not permitted'),t('Manufacturing Settings are view-only for you'),'warn');return;}   // REV21.4 (issue 1)
   const it=id?mfgItem(kind,id):null; const isQc=kind==='qcDispositions';
   openModal(`<div class="modal-h"><div><h3>${esc(id?t('Edit'):t('Add'))} · ${esc(t({stages:'Production Stage',wasteCategories:'Waste Category',qcDispositions:'QC Disposition'}[kind]||kind))}</h3></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b"><div class="form-grid">
@@ -22679,7 +22875,8 @@ function openMfgCfgForm(kind,seqKey,id){
     </div></div>
     <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" onclick="saveMfgCfgForm('${kind}','${seqKey}',${id||0})">${esc(t('Save'))}</button></div>`,'md');
 }
-function saveMfgCfgForm(kind,seqKey,id){ const g=x=>document.getElementById(x); const o={code:g('mc_code').value.trim(),sort:+g('mc_sort').value||0,nameEn:g('mc_en').value.trim(),nameAr:g('mc_ar').value.trim()};
+function saveMfgCfgForm(kind,seqKey,id){ if(!mfgCanEdit()){toast(t('Not permitted'),'','warn');return;}   // REV21.4 (issue 1) defense-in-depth
+  const g=x=>document.getElementById(x); const o={code:g('mc_code').value.trim(),sort:+g('mc_sort').value||0,nameEn:g('mc_en').value.trim(),nameAr:g('mc_ar').value.trim()};
   if(!o.nameEn){toast(t('Name required'),'','warn');return;} if(id)o.id=id;
   if(kind==='qcDispositions'){o.allowsPacking=g('mc_pack').value==='1';o.requiresRework=g('mc_rw').value==='1';o.isScrap=g('mc_scrap').value==='1';o.isHold=g('mc_hold').value==='1';}
   const r=mfgCfgSave(kind,seqKey,o); if(!r.ok){toast(t('Cannot save'),r.error,'warn');return;} closeModal();go('mfgsettings');toast(t('Saved'),'','ok'); }
@@ -22689,7 +22886,7 @@ PAGES.boms=function(){
   if(!navAllowed('boms')){V.innerHTML=`<div class="empty"><div class="e-ic">&#128274;</div><b>${esc(t('Not permitted'))}</b></div>`;return;}
   const list=(DB.boms||[]).slice().sort((a,b)=>b.id-a.id);
   V.innerHTML=`<div class="page-head"><div><h1>${esc(t('Bills of Materials'))}</h1><p>${esc(t('Material recipe per product/style — versioned & effective-dated. History is preserved by snapshot.'))}</p></div>
-    <div class="ph-actions">${(typeof exportBtn==='function')?exportBtn('boms'):''} ${can('manageBOM')?`<button class="btn primary" onclick="openBomForm()">+ ${esc(t('New BOM'))}</button>`:''}</div></div>
+    <div class="ph-actions">${(typeof exportBtn==='function')?exportBtn('boms'):''} ${canAction('boms','create',can('manageBOM'))?`<button class="btn primary" onclick="openBomForm()">+ ${esc(t('New BOM'))}</button>`:''}</div></div>
   <div class="card row-gap"><div class="card-b" style="padding:0"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('BOM #'))}</th><th>${esc(t('Product / Style'))}</th><th class="num">${esc(t('Version'))}</th><th class="num">${esc(t('Materials'))}</th><th>${esc(t('Effective From'))}</th><th>${esc(t('Status'))}</th></tr></thead><tbody>
     ${list.length?list.map(b=>`<tr class="clickable" onclick="go('bomdetail',{id:${b.id}})"><td class="t-strong">${esc(b.bomNo)}</td><td>${esc((productById(b.productId)||{}).name||'—')}</td><td class="num">v${b.version}</td><td class="num">${(b.lines||[]).length}</td><td>${esc(b.effectiveFrom||'—')}</td><td>${hBomBadge(b.status)}</td></tr>`).join(''):`<tr><td colspan="6"><div class="empty" style="padding:18px"><div class="e-ic">&#128220;</div><b>${esc(t('No BOMs yet'))}</b><p>${esc(t('Create a material recipe for a product to enable requirements, shortage and costing.'))}</p></div></td></tr>`}
   </tbody></table></div></div></div>`;
@@ -22700,9 +22897,9 @@ PAGES.bomdetail=function(p){
   V.innerHTML=`<div class="page-head"><div><p style="margin:0"><span class="link" onclick="go('boms')">${esc(t('Bills of Materials'))}</span> / ${esc(b.bomNo)}</p>
     <h1 style="margin-top:4px">${esc(b.bomNo)} <span class="muted" style="font-size:14px">v${b.version}</span> ${hBomBadge(b.status)}</h1><p>${esc((productById(b.productId)||{}).name||'')}</p></div>
     <div class="ph-actions">
-      ${can('manageBOM')&&b.status==='Draft'?`<button class="btn" onclick="openBomForm(${b.id})">&#9998; ${esc(t('Edit Draft'))}</button> <button class="btn primary green" onclick="bomActivate(${b.id})">&#10003; ${esc(t('Activate'))}</button>`:''}
-      ${can('manageBOM')&&b.status==='Active'?`<button class="btn" onclick="bomNewVersion(${b.id})">+ ${esc(t('New Version'))}</button> <button class="btn danger" onclick="bomDeactivate(${b.id})">${esc(t('Deactivate'))}</button>`:''}
-      ${can('manageBOM')?`<button class="btn" onclick="bomDuplicate(${b.id})">${esc(t('Duplicate'))}</button>`:''}
+      ${b.status==='Draft'?`${canAction('boms','edit',can('manageBOM'))?`<button class="btn" onclick="openBomForm(${b.id})">&#9998; ${esc(t('Edit Draft'))}</button>`:''} ${canAction('boms','edit',can('manageBOM'))?`<button class="btn primary green" onclick="bomActivate(${b.id})">&#10003; ${esc(t('Activate'))}</button>`:''}`:''}
+      ${b.status==='Active'?`${canAction('boms','create',can('manageBOM'))?`<button class="btn" onclick="bomNewVersion(${b.id})">+ ${esc(t('New Version'))}</button>`:''} ${canAction('boms','edit',can('manageBOM'))?`<button class="btn danger" onclick="bomDeactivate(${b.id})">${esc(t('Deactivate'))}</button>`:''}`:''}
+      ${canAction('boms','create',can('manageBOM'))?`<button class="btn" onclick="bomDuplicate(${b.id})">${esc(t('Duplicate'))}</button>`:''}
     </div></div>
   <div class="stat-row" style="margin-bottom:12px"><div class="stat"><div class="lb">${esc(t('Version'))}</div><div class="vl">v${b.version}</div></div>
     <div class="stat"><div class="lb">${esc(t('Effective From'))}</div><div class="vl" style="font-size:15px">${esc(b.effectiveFrom||'—')}</div></div>
@@ -22719,7 +22916,8 @@ PAGES.bomdetail=function(p){
 };
 window._bomLines=[];
 function openBomForm(id){
-  if(!can('manageBOM')){toast(t('Not permitted'),'','warn');return;}
+  // REV21.3 (blocker 2): exact action — New BOM needs boms:create; Edit Draft needs boms:edit.
+  if(!canAction('boms', id?'edit':'create', can('manageBOM'))){toast(t('Not permitted'), id?t('You cannot edit BOMs'):t('You cannot create BOMs'),'warn');return;}
   const b=id?bomById(id):null; _bomLines=b?b.lines.map(l=>({...l})):[{}];
   openModal(`<div class="modal-h"><div><h3>${esc(id?t('Edit BOM Draft'):t('New BOM'))}</h3><div class="sub">${esc(t('Uses canonical Raw Material IDs. Editing an active BOM is done via New Version.'))}</div></div><button class="x" data-close>&times;</button></div>
     <div class="modal-b"><div class="form-grid">
@@ -22747,10 +22945,12 @@ function saveBomForm(id){ const g=x=>document.getElementById(x); const lines=bom
   if(!g('bm_prod').value){toast(t('Select a product'),'','warn');return;} if(!lines.length){toast(t('Add at least one material line'),'','warn');return;}
   const r=createBom({productId:g('bm_prod').value,lines,notes:g('bm_notes').value,effectiveFrom:g('bm_eff').value});
   if(!r.ok){toast(t('Cannot save'),r.error,'warn');return;} closeModal();FLASH_NEXT=true;go('bomdetail',{id:r.bom.id});toast(t('BOM created'),r.bom.bomNo,'ok'); }
-function bomActivate(id){ const eff=prompt(t('Effective from (YYYY-MM-DD):'),dateToInput(TODAY)); if(eff==null)return; const r=activateBom(id,eff); if(!r.ok){toast(t('Cannot activate'),r.error,'warn');return;} FLASH_NEXT=true;go('bomdetail',{id});toast(t('BOM activated'),'','ok'); }
-function bomDeactivate(id){ const r=deactivateBom(id); if(!r.ok){toast(t('Cannot'),r.error,'warn');return;} FLASH_NEXT=true;go('bomdetail',{id}); }
-function bomNewVersion(id){ const r=newBomVersion(id); if(!r.ok){toast(t('Cannot'),r.error,'warn');return;} FLASH_NEXT=true;go('bomdetail',{id:r.bom.id});toast(t('New draft version created'),r.bom.bomNo+' v'+r.bom.version,'ok'); }
-function bomDuplicate(id){ const src=bomById(id); if(!src)return; const r=createBom({productId:src.productId,lines:src.lines.map(l=>({...l})),variantOverrides:(src.variantOverrides||[]).map(v=>({...v})),notes:src.notes}); if(r.ok){FLASH_NEXT=true;go('bomdetail',{id:r.bom.id});toast(t('BOM duplicated'),'','ok');} }
+// REV21.3 (blocker 2): Activate/Deactivate are BOM-status UPDATES → canonical action is boms:edit (consistent with the
+// server column-free boms_c_update policy). New Version / Duplicate CREATE a new BOM row → boms:create.
+function bomActivate(id){ if(!canAction('boms','edit',can('manageBOM'))){toast(t('Not permitted'),'','warn');return;} const eff=prompt(t('Effective from (YYYY-MM-DD):'),dateToInput(TODAY)); if(eff==null)return; const r=activateBom(id,eff); if(!r.ok){toast(t('Cannot activate'),r.error,'warn');return;} FLASH_NEXT=true;go('bomdetail',{id});toast(t('BOM activated'),'','ok'); }
+function bomDeactivate(id){ if(!canAction('boms','edit',can('manageBOM'))){toast(t('Not permitted'),'','warn');return;} const r=deactivateBom(id); if(!r.ok){toast(t('Cannot'),r.error,'warn');return;} FLASH_NEXT=true;go('bomdetail',{id}); }
+function bomNewVersion(id){ if(!canAction('boms','create',can('manageBOM'))){toast(t('Not permitted'),'','warn');return;} const r=newBomVersion(id); if(!r.ok){toast(t('Cannot'),r.error,'warn');return;} FLASH_NEXT=true;go('bomdetail',{id:r.bom.id});toast(t('New draft version created'),r.bom.bomNo+' v'+r.bom.version,'ok'); }
+function bomDuplicate(id){ if(!canAction('boms','create',can('manageBOM'))){toast(t('Not permitted'),'','warn');return;} const src=bomById(id); if(!src)return; const r=createBom({productId:src.productId,lines:src.lines.map(l=>({...l})),variantOverrides:(src.variantOverrides||[]).map(v=>({...v})),notes:src.notes}); if(r.ok){FLASH_NEXT=true;go('bomdetail',{id:r.bom.id});toast(t('BOM duplicated'),'','ok');} }
 
 // ═══════════════════════════ CONSOLIDATED PRODUCTION ORDER DETAIL (H50) ═══════════════════════════
 let _poTab='overview';
@@ -23003,11 +23203,29 @@ if(typeof loadState==='function'){ const __l=loadState; loadState=function(o){ _
 // cloud hydration for the Phase H tables + mfgSettings (from app_settings)
 const H_SYNC=[['boms','boms'],['production_consumptions','prodConsumptions'],['production_returns','prodReturns'],['waste_records','wasteRecords'],['rework_records','reworkRecords'],['mfg_reversals','mfgReversals']];
 async function loadHTables(){ const rows=await Promise.all(H_SYNC.map(([tbl])=>sbGet(tbl).catch(()=>null))); H_SYNC.forEach(([tbl,key],i)=>{ if(rows[i]&&Array.isArray(rows[i]))DB[key]=rows[i].map(TMAP[tbl].from); });
-  try{ const s=await sbGet('app_settings').catch(()=>null); const data=(Array.isArray(s)&&s[0]&&s[0].data)?s[0].data:(s&&s.data?s.data:null); if(data&&data.mfgSettings)DB.mfgSettings=data.mfgSettings; }catch(e){} }
+  try{
+    if(currentUserRole==='Custom'){ // REV21.4 (issue 1) — Custom reads mfg settings via the narrow sanitized RPC (raw app_settings blocked without settings:view)
+      const m=await sbRpc('mfg_settings_get',{},true).catch(()=>null); if(m&&typeof m==='object'&&Object.keys(m).length)DB.mfgSettings=m;
+    } else { const s=await sbGet('app_settings').catch(()=>null); const data=(Array.isArray(s)&&s[0]&&s[0].data)?s[0].data:(s&&s.data?s.data:null); if(data&&data.mfgSettings)DB.mfgSettings=data.mfgSettings; }
+  }catch(e){} }
 if(typeof secureLoad==='function'){ const __sl=secureLoad; secureLoad=async function(){ const _r=await __sl(); if(_r===false)return false; try{await loadHTables();}catch(e){} return _r; }; }   // v3.26.7 — propagate success/failure
 // merge mfgSettings into the app_settings cloud bag (read-modify-write so the base keys are preserved)
 if(typeof securePushSettings==='function'){ const __sps=securePushSettings; securePushSettings=async function(){ await __sps(); if(!secureMode())return;
-  try{ const s=await sbGet('app_settings').catch(()=>null); let data=(Array.isArray(s)&&s[0]&&s[0].data)?s[0].data:(s&&s.data?s.data:{}); data.mfgSettings=DB.mfgSettings; await sbUpsert('app_settings',{id:'main',data}); }catch(e){} }; }
+  // REV21.5 (issue 2) — MFG persistence is gated per-user by the EXACT permission:
+  //   • Custom: persist via the narrow definer RPC ONLY when mfgsettings:edit is granted (the broad general-settings
+  //     write above is separately gated by settings:edit). A mfgsettings:edit-only user never touches app_settings
+  //     directly, so no false "Cloud save failed" — but a real mfg_settings_save failure still surfaces.
+  //   • Custom without mfgsettings:edit: no MFG write at all.
+  //   • Legacy: the existing raw read-modify-write merge (unchanged).
+  if(currentUserRole==='Custom'){
+    if(typeof hasPerm==='function' && hasPerm('mfgsettings','edit')){
+      try{ await sbRpc('mfg_settings_save',{p_mfg:DB.mfgSettings},true); }
+      catch(e){ toast('Cloud save failed',(e&&e.message)||t('Manufacturing settings were not saved'),'err'); }
+    }
+    return;
+  }
+  try{ const s=await sbGet('app_settings').catch(()=>null); let data=(Array.isArray(s)&&s[0]&&s[0].data)?s[0].data:(s&&s.data?s.data:{}); data.mfgSettings=DB.mfgSettings; await sbUpsert('app_settings',{id:'main',data}); }
+  catch(e){ toast('Cloud save failed',(e&&e.message)||t('Manufacturing settings were not saved'),'err'); } }; }
 
 // ═══════════════════════════ PERMISSIONS (H55) — additive capability set ═══════════════════════════
 const MFGH_PERMS_ALL={manageManufacturingSettings:true,manageBOM:true,releaseProductionOrder:true,recordConsumption:true,recordReturn:true,recordWaste:true,completeProduction:true,viewMaterialCost:true,manageManufacturingAccounting:true,runRMReconciliation:true,applyRMReconciliation:true};
@@ -23019,6 +23237,18 @@ if(typeof perms==='function'){ const __p=perms; perms=function(){ const base=__p
   if(r==='Administrator'||r==='Finance Manager')return {...base,...MFGH_PERMS_ALL};
   if(r==='Accountant')return {...base,...MFGH_PERMS_ALL,manageManufacturingSettings:false};
   if(r==='Sales Manager'||r==='Viewer')return {...base,...MFGH_PERMS_VIEW};
+  // REV21.3 (blocker 2) — a Custom user's Phase-H capabilities come from the EXACT matrix, NOT the viewManufacturing→OPS
+  // fallback below (which would have granted manageBOM + full production ops from a mere fabricorders:view). manageBOM is
+  // the page surface only; create vs edit vs activate/deactivate are gated EXACTLY at the buttons via canAction (New BOM /
+  // New Version / Duplicate = boms:create; Edit Draft / Activate / Deactivate = boms:edit — the canonical action is an
+  // UPDATE of the BOM row, so it maps to boms:edit, consistent with the server column-free boms_c_update policy).
+  // Production ops (release/consume/return/waste/complete), material cost, accounting, and RM apply are NOT in the Custom
+  // matrix and stay FALSE. mfgsettings:edit opens Manufacturing Settings.
+  if(r==='Custom'){ const H=(s,a)=>((typeof hasPerm==='function')?hasPerm(s,a):false); return {...base,
+    manageBOM:(H('boms','create')||H('boms','edit')),
+    manageManufacturingSettings:H('mfgsettings','edit'),
+    releaseProductionOrder:false, recordConsumption:false, recordReturn:false, recordWaste:false, completeProduction:false,
+    viewMaterialCost:false, manageManufacturingAccounting:false, runRMReconciliation:false, applyRMReconciliation:false }; }
   // production roles inherit manufacturing view/ops from base viewManufacturing where present
   if(base.viewManufacturing)return {...base,...MFGH_PERMS_OPS};
   return {...base,...MFGH_PERMS_NONE}; }; }
@@ -23747,7 +23977,7 @@ function cmiHistoryTable(){ return '<table class="table"><thead><tr><th>'+_E(_T(
 if(typeof serializeState==='function'){ const __s=serializeState; serializeState=function(){ const o=__s(); o.custMoveImportRuns=DB.custMoveImportRuns||[]; o.cmiProfiles=DB.cmiProfiles||[]; if(o.seq)o.seq.seqCmiRun=DB.seqCmiRun||0; return o; }; }
 if(typeof loadState==='function'){ const __l=loadState; loadState=function(o){ __l(o); DB.custMoveImportRuns=o.custMoveImportRuns||[]; DB.cmiProfiles=o.cmiProfiles||[]; DB.seqCmiRun=(o.seq&&o.seq.seqCmiRun)||((DB.custMoveImportRuns||[]).reduce((m,r)=>{const n=+String(r.runId||'').replace(/\D/g,'')||0;return Math.max(m,n);},0)); }; }
 if(typeof secureLoad==='function'){ const __sl=secureLoad; secureLoad=async function(){ const _r=await __sl(); if(_r===false)return false; try{ if(typeof sbGet==='function'){ const s=await sbGet('app_settings').catch(()=>null); let data=(Array.isArray(s)&&s[0]&&s[0].data)?s[0].data:(s&&s.data?s.data:{}); if(data){ if(Array.isArray(data.cmiRuns))DB.custMoveImportRuns=data.cmiRuns; if(Array.isArray(data.cmiProfiles))DB.cmiProfiles=data.cmiProfiles; } } }catch(e){} return _r; }; }   // v3.26.7 — propagate success/failure
-if(typeof securePushSettings==='function'){ const __sps=securePushSettings; securePushSettings=async function(){ await __sps(); try{ if(typeof secureMode==='function'&&secureMode()&&typeof sbGet==='function'){ const s=await sbGet('app_settings').catch(()=>null); let data=(Array.isArray(s)&&s[0]&&s[0].data)?s[0].data:(s&&s.data?s.data:{}); data.cmiProfiles=DB.cmiProfiles||[]; data.cmiRuns=(DB.custMoveImportRuns||[]).slice(-50); await sbUpsert('app_settings',{id:'main',data}); } }catch(e){} }; }
+if(typeof securePushSettings==='function'){ const __sps=securePushSettings; securePushSettings=async function(){ await __sps(); try{ if(typeof secureMode==='function'&&secureMode()&&typeof sbGet==='function'&&(typeof canPushGeneralSettings!=='function'||canPushGeneralSettings())){ /* REV21.5 — this cmiProfiles merge is a broad app_settings write; skip it for a Custom non-settings:edit user */ const s=await sbGet('app_settings').catch(()=>null); let data=(Array.isArray(s)&&s[0]&&s[0].data)?s[0].data:(s&&s.data?s.data:{}); data.cmiProfiles=DB.cmiProfiles||[]; data.cmiRuns=(DB.custMoveImportRuns||[]).slice(-50); await sbUpsert('app_settings',{id:'main',data}); } }catch(e){} }; }
 
 /* ═════════ permissions (additive) + nav ═════════ */
 if(typeof perms==='function'){ const __p=perms; perms=function(){ const base=__p();
@@ -25965,6 +26195,10 @@ function authOn(){ try{ return !!(typeof authRequired==='function'&&authRequired
 function isAdm(){ try{ return (typeof isAdmin==='function')?isAdmin():true; }catch(e){ return true; } }
 const MGR_ROLES=['Administrator','AR Accountant','Finance Manager','Accountant'];
 function srIsManager(){ if(!authOn())return true; return MGR_ROLES.includes(srMeRole()); }
+// REV21.3 (blocker 3): a Custom user's Sales Workspace access is READ-ONLY. The server enforces this (the 5 tables have a
+// SCOPE-AWARE SELECT-only Custom policy — no insert/update policy), and the client hides/blocks every write control.
+function srCustomRO(){ return authOn() && srMeRole()==='Custom'; }
+function srRoBlock(){ if(srCustomRO()){ toast(T('View only'),T('Your access to the Sales Workspace is read-only'),'warn'); return true; } return false; }
 function myScope(){ try{ return (typeof SCOPE!=='undefined')?SCOPE:null; }catch(e){ return null; } }
 function isRep(){ return authOn() && srMeRole()==='Sales Representative' && !!myScope(); }
 // v3.25.1 hardening: in cloud/secure mode every PRIVILEGED action (approve/post, post-immediately,
@@ -26050,6 +26284,7 @@ function prelimCompute(lines,custDisc,extraPct){ let sub=0,baseDisc=0,totDisc=0,
 
 let _pd=null; // preliminary-invoice draft state {id, customerId, date, notes, extraPct, exceptionReason, exceptionNote, lines:[]}
 function openPrelimForm(id){
+  if(srRoBlock())return;   // REV21.3 (blocker 3): Custom is read-only in the Sales Workspace
   if(!isRep()&&!srIsManager()){ toast(T('Not permitted'),T('Only a Sales Representative can create a preliminary invoice'),'warn'); return; }
   const p=id?prelimById(id):null;
   if(p&&p.status!=='Draft'){ toast(T('Locked'),T('Only a Draft preliminary invoice can be edited'),'warn'); return; }
@@ -26129,7 +26364,7 @@ function renderPrelimLines(){ const host=document.getElementById('pl_lines'); if
   const tot=document.getElementById('pl_tot'); if(tot)tot.innerHTML=`<div class="calc-row"><span class="lbl">${E(T('Subtotal'))}</span><span class="val">${egp(roll.subtotal)}</span></div>${roll.baseDiscount>0?`<div class="calc-row"><span class="lbl">${E(T('Base Discount'))}</span><span class="val neg">-${egp(roll.baseDiscount)}</span></div>`:''}${roll.extraDiscount>0?`<div class="calc-row"><span class="lbl">${E(T('Additional Invoice Discount'))}</span><span class="val neg">-${egp(roll.extraDiscount)}</span></div>`:''}<div class="calc-total"><span class="lbl">${E(T('Final Total'))}</span><span class="val">${egp(roll.total)}</span></div>`;
 }
 function prelimDelLine(i){ _pd.lines.splice(i,1); renderPrelimLines(); }
-async function prelimSave(submit){
+async function prelimSave(submit){ if(srRoBlock())return;   // REV21.3 (blocker 3): Custom is read-only
   const b=id=>document.getElementById(id);
   if(!_pd.customerId){ toast(T('Select a customer'),'','warn'); return; }
   if(!custInMyScope(_pd.customerId)){ toast(T('Not your customer'),T('You can only create a preliminary invoice for your own customers'),'err'); return; }
@@ -26173,12 +26408,12 @@ async function prelimSave(submit){
   if(submit){ notify({toRole:'Administrator',kind:'prelim_submitted',title:T('فاتورة مبدئية جديدة من مندوب'),body:srMeName()+' — '+p.prelimNo+' — '+custName(p.customerId)+' — '+egp(p.total),linkPage:'prelim',linkParams:{id:p.id},refKind:'prelim',refId:p.id}); }
   closeModal(); toast(T(submit?'Submitted':'Draft saved'),p.prelimNo,'ok'); refresh();
 }
-async function prelimSubmit(id){ const p=prelimById(id); if(!p||p.status!=='Draft')return;
+async function prelimSubmit(id){ if(srRoBlock())return; const p=prelimById(id); if(!p||p.status!=='Draft')return;
   if(srSecure()){ try{ const res=await sbRpc('rep_save_prelim',{p_prelim:{id:p.id,customer_id:p.customerId},p_lines:null,p_submit:true},true);
       if(res&&+res.line_count===0){ throw new Error(T('This draft has no persisted lines — add lines before submitting.')); }
       await srReloadAfterPost(); toast(T('Submitted'),(res&&res.prelim_no)||p.prelimNo,'ok'); }catch(e){ toast(T('Submit failed'),e.message||String(e),'err'); } return; }
   p.status='Submitted'; p.submittedAt=NOW(); p.submittedById=srMeId(); push('prelim',p); logAudit('Preliminary Invoice Submitted','PreliminaryInvoice',p.id,p.prelimNo,{},p.customerId); notify({toRole:'Administrator',kind:'prelim_submitted',title:T('فاتورة مبدئية جديدة من مندوب'),body:srMeName()+' — '+p.prelimNo+' — '+custName(p.customerId)+' — '+egp(p.total),linkPage:'prelim',linkParams:{id:p.id},refKind:'prelim',refId:p.id}); toast(T('Submitted'),p.prelimNo,'ok'); refresh(); }
-function prelimCancel(id){ const p=prelimById(id); if(!p)return;
+function prelimCancel(id){ if(srRoBlock())return; const p=prelimById(id); if(!p)return;
   if(p.status==='Converted'){ toast(T('Cannot cancel a converted preliminary invoice'),'','warn'); return; }
   if(p.status==='Cancelled') return;
   confirmDialog(T('Cancel preliminary invoice?'),`<div class="section-note">${E(T('It stays in history as Cancelled — nothing is deleted.'))}</div>`,async()=>{
@@ -26186,7 +26421,7 @@ function prelimCancel(id){ const p=prelimById(id); if(!p)return;
     p.status='Cancelled'; p.cancelledAt=NOW(); p.cancelledBy=srMeName(); push('prelim',p); logAudit('Preliminary Invoice Cancelled','PreliminaryInvoice',p.id,p.prelimNo,{},p.customerId); toast(T('Cancelled'),p.prelimNo,'ok'); refresh();
   },true);
 }
-function prelimConvert(id){ const p=prelimById(id); if(!p)return;
+function prelimConvert(id){ if(srRoBlock())return; const p=prelimById(id); if(!p)return;
   if(p.status==='Converted'||p.convertedInvoiceId){ toast(T('Already converted'),p.prelimNo,'warn'); return; }
   if(!canConvertPrelim()){ toast(T('Not permitted'),T('Your role cannot convert a preliminary invoice. Ask an authorized user (see Settings → Sales Representatives).'),'warn'); return; }
   if(p.status==='Cancelled'){ toast(T('Cancelled — cannot convert'),'','warn'); return; }
@@ -26441,8 +26676,8 @@ if(typeof PAGES!=='undefined'){
       (rows.length?rows.map(p=>`<tr><td class="t-strong">${E(p.prelimNo)}</td><td>${E(custName(p.customerId))}</td><td>${E(p.date||'')}</td><td class="num">${egp(p.total)}</td><td>${prelimStatusBadge(p.status)}</td><td>${p.convertedInvoiceId?`<span class="link" onclick="go('invoice',{id:${p.convertedInvoiceId}})">${E((invById(p.convertedInvoiceId)||{}).invoiceNumber||('INV-'+p.convertedInvoiceId))}</span>`:'—'}</td>
         <td style="white-space:nowrap">
           <button class="btn sm" onclick="SR.openPrelimPreview(${p.id})">${E(T('Preview'))}</button>
-          ${p.status==='Draft'?` <button class="btn sm" onclick="SR.openPrelimForm(${p.id})">${E(T('Edit'))}</button> <button class="btn sm" onclick="SR.prelimSubmit(${p.id})">${E(T('Submit'))}</button>`:''}
-          ${(p.status==='Draft'||p.status==='Submitted')?` <button class="btn sm danger" onclick="SR.prelimCancel(${p.id})">${E(T('Cancel'))}</button>`:''}
+          ${(!srCustomRO()&&p.status==='Draft')?` <button class="btn sm" onclick="SR.openPrelimForm(${p.id})">${E(T('Edit'))}</button> <button class="btn sm" onclick="SR.prelimSubmit(${p.id})">${E(T('Submit'))}</button>`:''}
+          ${(!srCustomRO()&&(p.status==='Draft'||p.status==='Submitted'))?` <button class="btn sm danger" onclick="SR.prelimCancel(${p.id})">${E(T('Cancel'))}</button>`:''}
         </td></tr>`).join(''):`<tr><td colspan="7"><div class="empty" style="padding:20px"><b>${E(T('No preliminary invoices yet'))}</b></div></td></tr>`)+
       `</tbody></table></div></div></div></div>`;
   };
@@ -26570,6 +26805,36 @@ if(typeof I18N!=='undefined'&&I18N.ar){Object.assign(I18N.ar,{
  "Pending Rep Collections":"تحصيلات مناديب معلّقة","Pending Rep Spending":"مصروفات مناديب معلّقة","Submitted Preliminary Invoices":"فواتير مبدئية مُرسلة","Representatives":"المناديب","Customers":"العملاء","Custody":"العهدة","Pending Coll.":"تحصيلات معلّقة","Submitted Prelim.":"مبدئية مُرسلة","Open 360":"عرض ٣٦٠","Funds":"العهدة","Salesperson":"المندوب",
  "Not permitted":"غير مسموح","Approve":"اعتماد","Reject":"رفض","Cancel":"إلغاء","Reject Spending":"رفض الصرف","Pending":"معلّق","Approved":"معتمد","Rejected":"مرفوض","Cancelled":"ملغى","Saved":"تم الحفظ","Submitted":"تم الإرسال","Draft saved":"حُفظت المسودة",
  "Setting":"الإعداد","Rep workspace policy — stored in app_settings.data.repSettings":"سياسة مساحة المندوب — تُحفظ في app_settings.data.repSettings"
+});}
+
+/* rev21.1 — Arabic for the granular matrix group headers + legacy-conversion note. */
+if(typeof I18N!=='undefined'&&I18N.ar){Object.assign(I18N.ar,{
+ "Overview":"عامة","Receivables":"المدينون","Payables":"الدائنون","Treasury":"الخزينة","Catalog & Inventory":"الكتالوج والمخزون",
+ "Manufacturing":"التصنيع","HR & Payroll":"الموارد البشرية والرواتب","Accounting":"المحاسبة","Sales & Incentives":"المبيعات والحوافز","System":"النظام",
+ "AP Dashboard":"لوحة الدائنين","Supplier Aging":"أعمار الموردين","Treasury Transactions":"حركات الخزينة","Manufacturing Dashboard":"لوحة التصنيع",
+ "Manufacturing Config":"إعدادات التصنيع","HR Dashboard":"لوحة الموارد البشرية","Salesperson Performance":"أداء المندوب",
+ "This user currently uses the legacy role":"يستخدم هذا المستخدم حاليًا الدور القديم",
+ "Their current effective access is preloaded below. Saving converts them to a custom-permission user with exactly this matrix.":"تم تحميل صلاحياته الفعلية الحالية أدناه. والحفظ يحوّله إلى مستخدم بصلاحيات مخصصة بهذه المصفوفة تمامًا.",
+ "Legacy role:":"دور قديم:"
+});}
+
+/* rev21 — Arabic for the per-user permission matrix + Administrator-created passwords (Users & Access). */
+if(typeof I18N!=='undefined'&&I18N.ar){Object.assign(I18N.ar,{
+ "Login Email":"بريد الدخول","Login":"الدخول","Password":"كلمة المرور","Confirm Password":"تأكيد كلمة المرور","New Password":"كلمة مرور جديدة",
+ "Create User":"إنشاء مستخدم","Save Changes":"حفظ التغييرات","Set Password":"تعيين كلمة المرور","Reset Password":"إعادة تعيين كلمة المرور","Reset / Change Password":"إعادة/تغيير كلمة المرور",
+ "Permissions":"الصلاحيات","Section":"القسم","Scope":"النطاق","All data":"كل البيانات","Own only":"الخاصة فقط",
+ "Full Access":"صلاحية كاملة","View Only":"عرض فقط","Select All View":"تحديد كل العرض","Select All Export":"تحديد كل التصدير","Clear All":"مسح الكل",
+ "Add":"إضافة","Confirm":"اعتماد","Reverse":"عكس","Export":"تصدير",
+ "Status":"الحالة","Active":"نشط","Protected":"محمي","No access yet":"لا صلاحيات بعد","Full access (Administrator)":"صلاحية كاملة (مدير النظام)",
+ "Set the login and grant exactly the sections and actions this user needs.":"عيّن بيانات الدخول وامنح المستخدم الأقسام والإجراءات التي يحتاجها فقط.",
+ "View is required for any action. Any action you grant automatically enables View for that section.":"العرض مطلوب لأي إجراء. أي إجراء تمنحه يفعّل العرض لهذا القسم تلقائيًا.",
+ "required for Own-data scope":"مطلوب لنطاق البيانات الخاصة",
+ "Own-data scope requires a linked salesperson.":"يتطلب نطاق البيانات الخاصة ربط مندوب.",
+ "A valid login email is required.":"بريد دخول صالح مطلوب.",
+ "Password must be at least 8 characters.":"يجب ألا تقل كلمة المرور عن 8 أحرف.",
+ "Password and confirmation do not match.":"كلمة المرور والتأكيد غير متطابقين.",
+ "An Administrator is not managed through the permission matrix.":"لا تُدار صلاحيات مدير النظام عبر مصفوفة الصلاحيات.",
+ "Password updated":"تم تحديث كلمة المرور","User created":"تم إنشاء المستخدم","User saved":"تم حفظ المستخدم"
 });}
 
 /* rev20.4 (Scope D) — Arabic for the mode-aware active-commercial-base strings used by the Additional-Discount badge
@@ -26752,13 +27017,157 @@ window.SR={ _awaitConvert:null, _awaitPost:null, _stockCache:{}, _meId:srMeId, _
   // retries of the same save (so a lost-response retry is idempotent server-side), cleared on success.
   let _uaAddKey=null;
   function _uaNewKey(){ try{ if(typeof crypto!=='undefined'&&crypto.randomUUID)return crypto.randomUUID(); }catch(e){} return 'uakey-'+Date.now()+'-'+Math.random().toString(36).slice(2); }
+
+  // ─── REV21 permission matrix (mirrors migration-15 public.permission_sections; server re-validates) ───
+  const PM_ACTIONS=['view','create','edit','delete','confirm','reverse','export'];
+  const PM_ALABEL={view:'View',create:'Add',edit:'Edit',delete:'Delete',confirm:'Confirm',reverse:'Reverse',export:'Export'};
+  // REV21.1 (#1) — GRANULAR per-page sections, grouped for the UI. Mirrors migration-15 permission_sections
+  // (actions listed ONLY where enforced client+server; 'users' is NOT grantable). tuple: [key,label,grp,actions,has_scope]
+  const SECTIONS_META=[
+    ['dashboard','Dashboard','Overview',['view','export'],false],
+    ['customers','Customers','Receivables',['view','create','edit','export'],true],
+    ['ar','Accounts Receivable','Receivables',['view','export'],true],
+    ['invoices','Invoices','Receivables',['view','create','edit','confirm','reverse','export'],true],
+    ['returns','Returns','Receivables',['view','create','confirm','reverse','export'],true],
+    ['collections','Collections','Receivables',['view','create','reverse','export'],true],
+    ['cheques','Cheques','Receivables',['view','create','edit','reverse','export'],true],
+    ['settlements','Customer Settlements','Receivables',['view','create','reverse','export'],true],
+    ['suppliers','Suppliers','Receivables',['view','export'],false],
+    ['ap','AP Dashboard','Payables',['view','export'],false],
+    ['purchaseinvoices','Purchase Invoices','Payables',['view','create','edit','export'],false],
+    ['supplierpayments','Supplier Payments','Payables',['view','create','export'],false],
+    ['purchasereturns','Purchase Returns','Payables',['view','create','export'],false],
+    ['apaging','Supplier Aging','Payables',['view','export'],false],
+    ['treasury','Treasury','Treasury',['view','export'],false],
+    ['cashsafes','Cash Safes','Treasury',['view','create','edit','export'],false],
+    ['bankaccounts','Bank Accounts','Treasury',['view','create','edit','export'],false],
+    ['treasurytxns','Treasury Transactions','Treasury',['view','create','export'],false],
+    ['treasuryrecon','Reconciliation','Treasury',['view','export'],false],
+    ['expenses','Expenses','Expenses',['view','create','edit','export'],false],
+    ['expensedash','Expense Dashboard','Expenses',['view','export'],false],
+    ['expensereports','Expense Reports','Expenses',['view','export'],false],
+    ['expensecategories','Expense Categories','Expenses',['view','create','edit'],false],
+    ['recurringexpenses','Recurring Expenses','Expenses',['view','create','edit','export'],false],
+    ['catalog','Products / Catalog','Catalog & Inventory',['view','create','edit','delete','export'],false],
+    ['inventory','Inventory','Catalog & Inventory',['view','export'],false],
+    ['warehouses','Warehouses','Catalog & Inventory',['view','edit','export'],false],
+    ['transfers','Stock Transfers','Catalog & Inventory',['view','create','export'],false],
+    ['invmigration','Inventory Migration','Catalog & Inventory',['view','export'],false],
+    ['invreports','Inventory Reports','Catalog & Inventory',['view','export'],false],
+    ['mfgdash','Manufacturing Dashboard','Manufacturing',['view','export'],false],
+    ['fabricorders','Fabric Orders','Manufacturing',['view','create','edit','export'],false],
+    ['rawmaterials','Raw Materials','Manufacturing',['view','create','edit','export'],false],
+    ['prodorders','Production Orders','Manufacturing',['view','export'],false],
+    ['cutting','Cutting Permits','Manufacturing',['view','export'],false],
+    ['lines','Production Lines','Manufacturing',['view','export'],false],
+    ['quality','Quality Control','Manufacturing',['view','export'],false],
+    ['packing','Packing','Manufacturing',['view','export'],false],
+    ['purchasing','Purchasing','Manufacturing',['view','create','export'],false],
+    ['trace','Traceability','Manufacturing',['view','export'],false],
+    ['mfgconfig','Manufacturing Config','Manufacturing',['view','edit'],false],
+    ['mfgdashx','Production Dashboard','Manufacturing',['view','export'],false],
+    ['boms','Bills of Materials','Manufacturing',['view','create','edit','export'],false],
+    ['shortages','Material Shortages','Manufacturing',['view','export'],false],
+    ['rmreconcilemfg','RM Reconciliation','Manufacturing',['view','export'],false],
+    ['mfgsettings','Manufacturing Settings','Manufacturing',['view','edit'],false],
+    ['hrdash','HR Dashboard','HR & Payroll',['view','export'],false],
+    ['employees','Employees','HR & Payroll',['view','create','edit','export'],false],
+    ['shifts','Shifts','HR & Payroll',['view','export'],false],
+    ['attendance','Attendance','HR & Payroll',['view','export'],false],
+    ['attmonth','Monthly Attendance','HR & Payroll',['view','export'],false],
+    ['fingerprint','Fingerprint Import','HR & Payroll',['view','export'],false],
+    ['leaves','Leaves & Permissions','HR & Payroll',['view','export'],false],
+    ['payroll','Payroll','HR & Payroll',['view','export'],false],
+    ['advances','Advances','HR & Payroll',['view','export'],false],
+    ['hrsettings','HR & Payroll Settings','HR & Payroll',['view','edit'],false],
+    ['accounting','Accounting Center','Accounting',['view','export'],false],
+    ['coa','Chart of Accounts','Accounting',['view','export'],false],
+    ['ledger','General Ledger','Accounting',['view','export'],false],
+    ['opening','Opening Balances','Accounting',['view','export'],false],
+    ['reconcile','Reconciliation','Accounting',['view','export'],false],
+    ['reps','Salespeople','Sales & Incentives',['view','edit','export'],false],
+    ['commissions','Commissions','Sales & Incentives',['view','export'],false],
+    ['commrecalc','Commission Recalculation','Sales & Incentives',['view'],false],
+    ['bonuses','Bonuses','Sales & Incentives',['view','export'],false],
+    ['spperf','Salesperson Performance','Sales & Incentives',['view','export'],false],
+    ['prelim','Preliminary Invoices','Sales Workspace',['view','export'],true],
+    ['repcollect','Rep Collections','Sales Workspace',['view','export'],true],
+    ['myfunds','My Funds','Sales Workspace',['view','export'],true],
+    ['reports','Reports','System',['view','export'],false],
+    ['audit','Audit Log','System',['view','export'],false],
+    ['settings','Settings','System',['view','edit'],false]
+  ];
+  function pmHas(sec,act){ return sec[3].indexOf(act)>=0; }
+  // Render the matrix into #ua_matrix, grouped by section group, from a state object {section:{can_*,data_scope}}
+  function uaRenderMatrix(state){
+    state=state||{};
+    const head=`<tr><th style="text-align:start">${esc(t('Section'))}</th>`+PM_ACTIONS.map(a=>`<th>${esc(t(PM_ALABEL[a]))}</th>`).join('')+`<th>${esc(t('Scope'))}</th></tr>`;
+    let lastGrp=''; const ncols=PM_ACTIONS.length+2;
+    const rows=SECTIONS_META.map(sec=>{
+      const k=sec[0], acts=sec[3], scoped=sec[4], st=state[k]||{};
+      let grpRow='';
+      if(sec[2]!==lastGrp){ lastGrp=sec[2]; grpRow=`<tr class="pm-grp"><td colspan="${ncols}" style="background:var(--line,#eef);font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;padding:6px 8px">${esc(t(sec[2]))}</td></tr>`; }
+      const cells=PM_ACTIONS.map(a=>{
+        if(acts.indexOf(a)<0)return '<td class="muted" style="text-align:center">—</td>';
+        const on=!!st['can_'+a];
+        return `<td style="text-align:center"><input type="checkbox" id="pm_${k}_${a}" data-sec="${k}" data-act="${a}" ${on?'checked':''} onchange="uaDep('${k}','${a}')"></td>`;
+      }).join('');
+      let scopeCell='<td class="muted" style="text-align:center">—</td>';
+      if(scoped){ const sc=(st.data_scope==='own')?'own':'all';
+        scopeCell=`<td style="text-align:center"><select id="pm_${k}_scope" class="inp" style="padding:2px 4px;font-size:11px" onchange="uaSyncSalesRow()"><option value="all" ${sc==='all'?'selected':''}>${esc(t('All data'))}</option><option value="own" ${sc==='own'?'selected':''}>${esc(t('Own only'))}</option></select></td>`; }
+      return grpRow+`<tr><td style="text-align:start;font-weight:600">${esc(t(sec[1]))}</td>${cells}${scopeCell}</tr>`;
+    }).join('');
+    return `<div class="tbl-wrap" style="max-height:52vh;overflow:auto"><table class="tbl pm-matrix" style="font-size:12px"><thead>${head}</thead><tbody>${rows}</tbody></table></div>`;
+  }
+  // dependency: any child action ⇒ view; unchecking view clears the section's children (mirrors the server rule)
+  window.uaDep=function(k,act){
+    const view=document.getElementById('pm_'+k+'_view');
+    const kids=['create','edit','delete','confirm','reverse','export'].map(a=>document.getElementById('pm_'+k+'_'+a)).filter(Boolean);
+    if(act==='view'&&view&&!view.checked){ kids.forEach(c=>c.checked=false); }
+    else if(act!=='view'){ const anyKid=kids.some(c=>c.checked); if(anyKid&&view)view.checked=true; }
+    uaSyncSalesRow();
+  };
+  function uaQuick(mode){
+    SECTIONS_META.forEach(sec=>{ const k=sec[0];
+      PM_ACTIONS.forEach(a=>{ const el=document.getElementById('pm_'+k+'_'+a); if(!el)return;
+        if(mode==='full')el.checked=pmHas(sec,a);
+        else if(mode==='view')el.checked=(a==='view'&&pmHas(sec,'view'));
+        else if(mode==='clear')el.checked=false;
+        else if(mode==='allview')el.checked=(a==='view'?pmHas(sec,'view'):el.checked);
+        else if(mode==='allexport')el.checked=(a==='export'?pmHas(sec,'export'):el.checked);
+      });
+    });
+    // enforce dependency after a bulk change
+    SECTIONS_META.forEach(sec=>uaDep(sec[0],'view'));
+    // re-assert children→view for full/allexport
+    SECTIONS_META.forEach(sec=>{ const anyKid=['create','edit','delete','confirm','reverse','export'].some(a=>{const e=document.getElementById('pm_'+sec[0]+'_'+a);return e&&e.checked;}); const v=document.getElementById('pm_'+sec[0]+'_view'); if(anyKid&&v)v.checked=true; });
+    uaSyncSalesRow();
+  }
+  window.uaQuick=uaQuick;
+  // collect the matrix DOM into a permissions object for the server
+  function uaCollectMatrix(){
+    const out={};
+    SECTIONS_META.forEach(sec=>{ const k=sec[0]; const o={};
+      let any=false;
+      PM_ACTIONS.forEach(a=>{ if(!pmHas(sec,a))return; const el=document.getElementById('pm_'+k+'_'+a); const on=!!(el&&el.checked); o['can_'+a]=on; if(on)any=true; });
+      if(sec[4]){ const s=document.getElementById('pm_'+k+'_scope'); o.data_scope=(s&&s.value==='own')?'own':'all'; }
+      if(any)out[k]=o;   // only send sections with at least one action (server stores view-bearing rows)
+    });
+    return out;
+  }
+  window.uaCollectMatrix=uaCollectMatrix;
+  // show the "Linked salesperson" row only when any section is scoped to Own (Own needs an ownership link)
+  function uaAnyOwn(){ return SECTIONS_META.some(sec=>{ if(!sec[4])return false; const s=document.getElementById('pm_'+sec[0]+'_scope'); return s&&s.value==='own'; }); }
+  function uaSyncSalesRow(){ const row=document.getElementById('ua_rep_row'); if(row)row.style.display=uaAnyOwn()?'':'none'; }
+  window.uaSyncSalesRow=uaSyncSalesRow;
+
   window.uaRender=async function(box){
     if(!box)box=document.getElementById('settingsBody'); if(!box)return;
     if(!isAdminSecure()){ box.innerHTML=`<div class="card"><div class="card-b"><div class="section-note">${esc(t('This page is available to Administrators only.'))}</div></div></div>`; return; }
     box.innerHTML=`<div class="card"><div class="card-h"><h3>&#128100; ${esc(t('Users & Access'))}</h3><div class="right"><button class="btn primary sm" onclick="uaOpenAdd()">${esc(t('+ Add User'))}</button></div></div>
       <div class="card-b"><div class="section-note" style="font-size:11.5px;margin-bottom:10px">${esc(t('Manage the real people who can sign in, their role, and their inventory-section access.'))}</div>
       <div id="uaBody"><div class="muted" style="padding:12px">${esc(t('Loading users…'))}</div></div></div></div>`;
-    try{ const rows=await sbRpc('admin_list_users',{},true); _uaCache=Array.isArray(rows)?rows:[]; uaRenderTable(); }
+    try{ const rows=await sbRpc('admin_users_overview',{},true); _uaCache=Array.isArray(rows)?rows:[]; uaRenderTable(); }
     catch(e){ const b=document.getElementById('uaBody'); if(b)b.innerHTML=note((e&&e.message)||String(e),true); }
   };
   function uaRenderTable(){
@@ -26766,23 +27175,23 @@ window.SR={ _awaitConvert:null, _awaitPost:null, _stockCache:{}, _meId:srMeId, _
     if(!_uaCache.length){ box.innerHTML=`<div class="empty" style="padding:14px"><b>${esc(t('No users yet'))}</b></div>`; return; }
     const meId=(SESSION&&SESSION.uid)||'';
     const body=_uaCache.map(u=>{
-      const isInv=(u.role==='Inventory User'); const acc=u.access||{};
-      // rev20.2 (1D) — show EFFECTIVE access: Catalog is a prerequisite for Inventory & Stock Transfers. Configured
-      // rows come from admin_list_users (raw); here we grey a section that is off OR effectively off (catalog off).
-      const catOn=(acc.catalog!==false);
-      const effOn=(k)=>((k==='inventory'||k==='stock_transfers')?(acc[k]!==false&&catOn):(acc[k]!==false));
-      const accCell=isInv?SECTIONS.map(s=>{const on=effOn(s[0]);const dep=(!on&&catOn===false&&(s[0]==='inventory'||s[0]==='stock_transfers'));
-        return `<span class="badge ${on?'b-green':'b-gray'}" style="margin:1px" title="${dep?esc(t('Unavailable while Catalog is off')):''}">${esc(t(s[1]))}${on?'':' ✕'}</span>`;}).join(' '):'<span class="muted">—</span>';
+      const isAdm=(u.is_admin===true||u.role==='Administrator');
+      const summary=isAdm?`<span class="badge b-blue">${esc(t('Full access (Administrator)'))}</span>`
+        :(u.perm_summary?`<span class="muted" style="font-size:11px">${esc(u.perm_summary)}</span>`:`<span class="muted">${esc(t('No access yet'))}</span>`);
+      const actions=isAdm
+        ? `<span class="muted" style="font-size:11px">${esc(t('Protected'))}</span>`
+        : `<button class="btn sm" onclick="uaOpenEdit('${esc(String(u.id))}')">${esc(t('Edit'))}</button>
+           <button class="btn sm" onclick="uaResetPw('${esc(String(u.id))}','${esc(String(u.email||''))}')">${esc(t('Reset Password'))}</button>`;
+      const stat=String(u.id)===String(meId)?`<span class="badge b-blue">${esc(t('You'))}</span>`:`<span class="badge b-green">${esc(t('Active'))}</span>`;
       return `<tr>
-        <td><b>${esc(u.full_name||'—')}</b>${String(u.id)===String(meId)?` <span class="badge b-blue">${esc(t('You'))}</span>`:''}</td>
+        <td><b>${esc(u.full_name||'—')}</b></td>
         <td class="muted">${esc(u.email||'—')}</td>
-        <td>${esc(t(u.role||'Viewer'))}</td>
-        <td>${u.salesperson_id?esc(repName(u.salesperson_id)):'<span class="muted">—</span>'}</td>
-        <td>${accCell}</td>
-        <td class="num row-act"><button class="btn sm" onclick="uaOpenEdit('${esc(String(u.id))}')">${esc(t('Edit'))}</button></td>
+        <td>${stat}</td>
+        <td style="max-width:360px">${summary}</td>
+        <td class="num row-act">${actions}</td>
       </tr>`;
     }).join('');
-    box.innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('Full Name'))}</th><th>${esc(t('Email'))}</th><th>${esc(t('Role'))}</th><th>${esc(t('Linked Salesperson'))}</th><th>${esc(t('Inventory Section Access'))}</th><th class="num col-act">${esc(t('Actions'))}</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    box.innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('Full Name'))}</th><th>${esc(t('Login'))}</th><th>${esc(t('Status'))}</th><th>${esc(t('Permissions'))}</th><th class="num col-act">${esc(t('Actions'))}</th></tr></thead><tbody>${body}</tbody></table></div>`;
   }
   function uaSectionTogglesHTML(acc){
     return `<div class="section-note" style="font-size:11px;margin:8px 0">${esc(t('These sections can only NARROW the Inventory User base access — they can never grant finance or cost.'))}</div>
@@ -26803,68 +27212,105 @@ window.SR={ _awaitConvert:null, _awaitPost:null, _stockCache:{}, _meId:srMeId, _
         const cat=document.getElementById('ua_sec_catalog'); if(cat)cat.onchange=uaSyncSectionDeps; uaSyncSectionDeps(); }
       else { secRow.style.display='none'; secRow.innerHTML=''; } }
   }
+  const _pmQuickBar=()=>`<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
+      <button type="button" class="btn sm" onclick="uaQuick('full')">${esc(t('Full Access'))}</button>
+      <button type="button" class="btn sm" onclick="uaQuick('view')">${esc(t('View Only'))}</button>
+      <button type="button" class="btn sm" onclick="uaQuick('allview')">${esc(t('Select All View'))}</button>
+      <button type="button" class="btn sm" onclick="uaQuick('allexport')">${esc(t('Select All Export'))}</button>
+      <button type="button" class="btn sm danger" onclick="uaQuick('clear')">${esc(t('Clear All'))}</button>
+    </div>`;
   window.uaOpenAdd=function(){
     if(!isAdminSecure())return;
     _uaAddKey=_uaNewKey();   // a genuinely new Add User form operation → a fresh idempotency key
-    openModal(`<div class="modal-h"><div><h3>${esc(t('Add User'))}</h3></div><button class="x" data-close>&times;</button></div>
+    openModal(`<div class="modal-h"><div><h3>${esc(t('Add User'))}</h3><div class="sub">${esc(t('Set the login and grant exactly the sections and actions this user needs.'))}</div></div><button class="x" data-close>&times;</button></div>
       <div class="modal-b"><div class="form-grid">
         <div class="form-row"><label>${esc(t('Full Name'))} <span class="req">*</span></label><input id="ua_name" dir="auto"></div>
-        <div class="form-row"><label>${esc(t('Email'))} <span class="req">*</span></label><input id="ua_email" type="email" dir="ltr"></div>
-        <div class="form-row"><label>${esc(t('Role'))} <span class="req">*</span></label><select id="ua_role">${roleOpts('Viewer')}</select></div>
-        <div class="form-row" id="ua_rep_row" style="display:none"><label>${esc(t('Linked Salesperson'))} <span class="req">*</span></label><select id="ua_rep">${repOpts('')}</select></div>
+        <div class="form-row"><label>${esc(t('Login Email'))} <span class="req">*</span></label><input id="ua_email" type="email" dir="ltr" autocomplete="off"></div>
+        <div class="form-row"><label>${esc(t('Password'))} <span class="req">*</span></label><input id="ua_pw" type="password" autocomplete="new-password"></div>
+        <div class="form-row"><label>${esc(t('Confirm Password'))} <span class="req">*</span></label><input id="ua_pw2" type="password" autocomplete="new-password"></div>
+        <div class="form-row" id="ua_rep_row" style="display:none"><label>${esc(t('Linked Salesperson'))} <span class="req">*</span> <span class="muted" style="font-size:11px">(${esc(t('required for Own-data scope'))})</span></label><select id="ua_rep">${repOpts('')}</select></div>
       </div>
-      <div id="ua_sec_row" style="display:none"></div>
+      <h4 style="margin:12px 0 2px">${esc(t('Permissions'))}</h4>
+      <div class="section-note" style="font-size:11px">${esc(t('View is required for any action. Any action you grant automatically enables View for that section.'))}</div>
+      ${_pmQuickBar()}
+      <div id="ua_matrix">${uaRenderMatrix({})}</div>
       <div id="ua_msg"></div></div>
-      <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" id="ua_save">${esc(t('Save User'))}</button></div>`,'md');
-    const roleSel=document.getElementById('ua_role'); const sync=()=>uaSyncRoleUI(roleSel.value,null); roleSel.onchange=sync; sync();
+      <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" id="ua_save">${esc(t('Create User'))}</button></div>`,'lg');
+    uaSyncSalesRow();
     document.getElementById('ua_save').onclick=uaDoAdd;
   };
   async function uaDoAdd(){
-    const name=(val('ua_name')||'').trim(), email=(val('ua_email')||'').trim().toLowerCase(), role=val('ua_role');
-    const repId=+val('ua_rep')||null; const msg=document.getElementById('ua_msg');
-    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ if(msg)msg.innerHTML=note(t('Email is required and must be valid.'),true); return; }
+    const name=(val('ua_name')||'').trim(), email=(val('ua_email')||'').trim().toLowerCase();
+    const pw=val('ua_pw')||'', pw2=val('ua_pw2')||''; const msg=document.getElementById('ua_msg');
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ if(msg)msg.innerHTML=note(t('A valid login email is required.'),true); return; }
     if(!name){ if(msg)msg.innerHTML=note(t('A full name is required.'),true); return; }
-    if(role==='Sales Representative'&&!repId){ if(msg)msg.innerHTML=note(t('A Sales Representative must be linked to a salesperson.'),true); return; }
+    if(pw.length<8){ if(msg)msg.innerHTML=note(t('Password must be at least 8 characters.'),true); return; }
+    if(pw!==pw2){ if(msg)msg.innerHTML=note(t('Password and confirmation do not match.'),true); return; }
+    const permissions=uaCollectMatrix();
+    const repId=uaAnyOwn()?(+val('ua_rep')||null):null;
+    if(uaAnyOwn()&&!repId){ if(msg)msg.innerHTML=note(t('Own-data scope requires a linked salesperson.'),true); return; }
     if(!_uaAddKey)_uaAddKey=_uaNewKey();
-    const body={action:'create',request_key:_uaAddKey,email,full_name:name,role,salesperson_id:(role==='Sales Representative'?repId:null)};
-    if(role==='Inventory User')body.access=uaCollectAccess();
+    const body={action:'create',request_key:_uaAddKey,email,full_name:name,password:pw,confirm_password:pw2,permissions,salesperson_id:repId};
     const btn=document.getElementById('ua_save'); if(btn){btn.disabled=true;btn.textContent=t('Saving…');}
-    try{ await sbFn('admin-users',body); _uaAddKey=null; toast(t('User created'),email,'ok'); closeModal(); uaRender(); }   // consumed on success → next add mints a new key
-    catch(e){ if(btn){btn.disabled=false;btn.textContent=t('Save User');} if(msg)msg.innerHTML=note((e&&e.message)||String(e),true); }   // keep _uaAddKey so a retry of the SAME save is idempotent
+    try{ await sbFn('admin-users',body); _uaAddKey=null; toast(t('User created'),email,'ok'); closeModal(); uaRender(); }
+    catch(e){ if(btn){btn.disabled=false;btn.textContent=t('Create User');} if(msg)msg.innerHTML=note((e&&e.message)||String(e),true); }
   }
-  window.uaOpenEdit=function(uid){
+  window.uaOpenEdit=async function(uid){
     if(!isAdminSecure())return;
     const u=_uaCache.find(x=>String(x.id)===String(uid)); if(!u)return;
-    const isMe=(String(u.id)===String((SESSION&&SESSION.uid)||''));
+    if(u.is_admin===true||u.role==='Administrator'){ toast(t('Protected'),t('An Administrator is not managed through the permission matrix.'),'warn'); return; }
+    // REV21.1 (#10) — a Custom user loads its stored matrix; a LEGACY user loads its TRUE current effective access
+    // (role defaults ∩ per-user section narrowing) so the Administrator reviews the real access before conversion.
+    const isLegacy=(u.role!=='Custom');
+    let state={};
+    try{ state=await sbRpc(isLegacy?'admin_get_effective_permissions':'admin_get_user_permissions',{p_user_id:u.id},true)||{}; }catch(e){ state={}; }
+    const legacyNote=isLegacy?`<div class="section-note" style="font-size:11px;border-color:#e6c78a;background:#fff8e8">${esc(t('This user currently uses the legacy role'))} “${esc(t(u.role||''))}”. ${esc(t('Their current effective access is preloaded below. Saving converts them to a custom-permission user with exactly this matrix.'))}</div>`:'';
     openModal(`<div class="modal-h"><div><h3>${esc(t('Edit User'))}</h3><div class="sub">${esc(u.email||'')}</div></div><button class="x" data-close>&times;</button></div>
       <div class="modal-b"><div class="form-grid">
         <div class="form-row"><label>${esc(t('Full Name'))} <span class="req">*</span></label><input id="ua_name" dir="auto" value="${esc(u.full_name||'')}"></div>
-        <div class="form-row"><label>${esc(t('Role'))} <span class="req">*</span></label><select id="ua_role" ${isMe?'disabled':''}>${roleOpts(u.role)}</select></div>
-        <div class="form-row" id="ua_rep_row" style="display:none"><label>${esc(t('Linked Salesperson'))} <span class="req">*</span></label><select id="ua_rep">${repOpts(u.salesperson_id)}</select></div>
+        <div class="form-row" id="ua_rep_row" style="display:none"><label>${esc(t('Linked Salesperson'))} <span class="req">*</span> <span class="muted" style="font-size:11px">(${esc(t('required for Own-data scope'))})</span></label><select id="ua_rep">${repOpts(u.salesperson_id)}</select></div>
       </div>
-      <div id="ua_sec_row" style="display:none"></div>
-      ${isMe?`<div class="section-note" style="font-size:11px;margin-top:8px">${esc(t('You cannot change your own role.'))}</div>`:''}
+      ${legacyNote}
+      <h4 style="margin:12px 0 2px">${esc(t('Permissions'))}</h4>
+      <div class="section-note" style="font-size:11px">${esc(t('View is required for any action. Any action you grant automatically enables View for that section.'))}</div>
+      ${_pmQuickBar()}
+      <div id="ua_matrix">${uaRenderMatrix(state)}</div>
       <div id="ua_msg"></div></div>
-      <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" id="ua_save">${esc(t('Save User'))}</button></div>`,'md');
-    const roleSel=document.getElementById('ua_role'); const sync=()=>uaSyncRoleUI(roleSel.value,u.access||{}); roleSel.onchange=sync; sync();
+      <div class="modal-f"><button class="btn sm" onclick="uaResetPw('${esc(String(u.id))}','${esc(String(u.email||''))}')">${esc(t('Reset / Change Password'))}</button><span style="flex:1"></span><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" id="ua_save">${esc(t('Save Changes'))}</button></div>`,'lg');
+    uaSyncSalesRow();
     document.getElementById('ua_save').onclick=()=>uaDoEdit(u);
   };
   async function uaDoEdit(u){
-    const name=(val('ua_name')||'').trim(); const roleEl=document.getElementById('ua_role');
-    const role=(roleEl&&roleEl.disabled)?u.role:val('ua_role');   // self-role locked
-    const repId=+val('ua_rep')||null; const msg=document.getElementById('ua_msg');
+    const name=(val('ua_name')||'').trim(); const msg=document.getElementById('ua_msg');
     if(!name){ if(msg)msg.innerHTML=note(t('A full name is required.'),true); return; }
-    if(role==='Sales Representative'&&!repId){ if(msg)msg.innerHTML=note(t('A Sales Representative must be linked to a salesperson.'),true); return; }
+    const permissions=uaCollectMatrix();
+    const repId=uaAnyOwn()?(+val('ua_rep')||null):null;
+    if(uaAnyOwn()&&!repId){ if(msg)msg.innerHTML=note(t('Own-data scope requires a linked salesperson.'),true); return; }
     const btn=document.getElementById('ua_save'); if(btn){btn.disabled=true;btn.textContent=t('Saving…');}
     try{
-      // rev20.4 (A3) — ONE atomic RPC: profile role + linked salesperson + Inventory section access + audit commit in a
-      // single DB transaction (no non-atomic two-step save that could leave a partial Inventory-User default-all-ON state).
-      // For an Inventory User the complete four-flag access object is sent; for any other role access is null (rows cleared).
-      const p_access=(role==='Inventory User')?uaCollectAccess():null;
-      await sbRpc('admin_update_user_atomic',{p_user_id:u.id,p_full_name:name,p_role:role,p_salesperson_id:(role==='Sales Representative'?repId:null),p_access},true);
+      // REV21 — ONE atomic server call reconciles the profile (role='Custom') + the FULL permission matrix + audit.
+      await sbFn('admin-users',{action:'update',user_id:u.id,full_name:name,permissions,salesperson_id:repId});
       toast(t('User saved'),u.email||name,'ok'); closeModal(); uaRender();
-    }catch(e){ if(btn){btn.disabled=false;btn.textContent=t('Save User');} if(msg)msg.innerHTML=note((e&&e.message)||String(e),true); }
+    }catch(e){ if(btn){btn.disabled=false;btn.textContent=t('Save Changes');} if(msg)msg.innerHTML=note((e&&e.message)||String(e),true); }
   }
+  // Admin-only Reset / Change Password (separate action; the password is never displayed, returned, or logged).
+  window.uaResetPw=function(uid,email){
+    if(!isAdminSecure())return;
+    openModal(`<div class="modal-h"><div><h3>${esc(t('Reset / Change Password'))}</h3><div class="sub">${esc(email||'')}</div></div><button class="x" data-close>&times;</button></div>
+      <div class="modal-b"><div class="form-grid">
+        <div class="form-row"><label>${esc(t('New Password'))} <span class="req">*</span></label><input id="ua_rpw" type="password" autocomplete="new-password"></div>
+        <div class="form-row"><label>${esc(t('Confirm Password'))} <span class="req">*</span></label><input id="ua_rpw2" type="password" autocomplete="new-password"></div>
+      </div><div id="ua_rmsg"></div></div>
+      <div class="modal-f"><button class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary" id="ua_rsave">${esc(t('Set Password'))}</button></div>`,'md');
+    document.getElementById('ua_rsave').onclick=async()=>{
+      const pw=val('ua_rpw')||'', pw2=val('ua_rpw2')||''; const m=document.getElementById('ua_rmsg');
+      if(pw.length<8){ if(m)m.innerHTML=note(t('Password must be at least 8 characters.'),true); return; }
+      if(pw!==pw2){ if(m)m.innerHTML=note(t('Password and confirmation do not match.'),true); return; }
+      const b=document.getElementById('ua_rsave'); if(b){b.disabled=true;b.textContent=t('Saving…');}
+      try{ await sbFn('admin-users',{action:'reset_password',user_id:uid,password:pw,confirm_password:pw2}); toast(t('Password updated'),email||'','ok'); closeModal(); }
+      catch(e){ if(b){b.disabled=false;b.textContent=t('Set Password');} if(m)m.innerHTML=note((e&&e.message)||String(e),true); }
+    };
+  };
 })();
 /*═══════════════ END v3.26 (rev20) USERS & ACCESS MODULE ═══════════════*/
 
@@ -26938,6 +27384,19 @@ if(typeof navAllowed==='function'){ const __navBaseSA=navAllowed; navAllowed=fun
 function productSelectableForNew(pid){ try{ const p=productById(+pid); return !!(p && p.active!==false); }catch(e){ return false; } }
 function variantSelectableForNew(v){ try{ if(!v || v.active===false)return false; return productSelectableForNew(v.productId); }catch(e){ return false; } }
 if(typeof window!=='undefined')Object.assign(window,{productSelectableForNew,variantSelectableForNew});
+
+/*═══════════════ REV21.2 (A) — FINAL nav authority for Custom users (MUST be the last navAllowed wrapper) ═══════════════
+ * Every module above installs its own role-based navAllowed wrapper (Expenses, Phase-F Inventory/Purchasing, Phase-H
+ * Manufacturing, custimport, recvchequesync, duedaterebuild, bonuses, bonusaudit, AR, Sales-Rep, section-access…).
+ * Those wrappers gate by legacy capability flags (can('viewExpenses') etc.) which are FALSE for a Custom user regardless
+ * of the matrix, so a Custom user granted e.g. Expenses:view would still be hidden. This final wrapper makes the per-user
+ * matrix the SOLE authority for Custom users: it short-circuits BEFORE any earlier wrapper runs, so each operational page
+ * resolves from its OWN matrix section (granting Fabric Orders never reveals BOMs / Production Dashboard / Shortages /
+ * Settings, and granting Expenses reveals ONLY Expenses). Legacy roles are completely unaffected (they fall through). */
+if(typeof navAllowed==='function'){ const __navBaseCustomFinal=navAllowed; navAllowed=function(id){
+  if(typeof currentUserRole!=='undefined' && currentUserRole==='Custom') return customNavAllowed(id);
+  return __navBaseCustomFinal(id);
+}; }
 
 appLockGate();   // Company App Lock → (User Login) → TexCredit
 </script>
