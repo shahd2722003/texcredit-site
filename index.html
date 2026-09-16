@@ -462,7 +462,7 @@ html[dir=rtl] .exp-menu{right:auto;left:0}
 /* TexCredit build: v3.13.1 — Arabic/RTL Correction (was v3.13 Consolidated Search / Filters / Windows (Arabic RTL search fix + Salesperson
    Performance filters + Customer Statement/Collections/Cheques/Invoices month filters). Source: v3.12 Cheque
    Date Cleanup. Additive, non-destructive. */
-const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev21.5) — CUSTOM USER PERMISSIONS · MFG PERSISTENCE HOTFIX. Manufacturing Settings save path: the mfg_settings_get/save RPCs now allow only Administrator + Finance Manager among legacy roles (Accountant and AR Accountant are rejected — no broadening); and securePushSettings routes a Custom user by exact permission — the broad app_settings (general-settings) write runs only with settings:edit, mfg_settings_save runs only with mfgsettings:edit (exactly once), a mfgsettings:edit-only user never attempts the broad write so no false "Cloud save failed" appears on a successful MFG save, while a real mfg_settings_save failure still surfaces; legacy save chain preserved. — was rev21.4: (1) Manufacturing Settings: a Custom mfgsettings:view user sees the page but ZERO mutation controls (Add/Edit/Enable/Disable hidden, tolerance/config inputs disabled) with defense-in-depth canAction(mfgsettings,edit) on openMfgCfgForm/saveMfgCfgForm/mfgCfgToggle/mfgCfgSetting; mfgsettings:edit persists via a narrow SECURITY DEFINER RPC (mfg_settings_save) that writes ONLY the mfgSettings key of app_settings — no general settings:edit needed, no unrelated settings exposed — and a failed secure write now surfaces (no silent swallow). (2) Expense Dashboard/Reports read the underlying data (expenses/expense_payments/expense_categories) when the user has expenses:view OR expensedash:view OR expensereports:view, while the Expenses NAV page still requires expenses:view; no create/edit is granted and direct writes stay rejected. — was rev21.3: Custom users now get FUNCTIONAL (not just visible) capabilities: the Expenses and Phase-H/BOM permission wrappers have exact Custom branches (create≠edit; approve/pay/reverse and production-ops stay ungranted; the old viewManufacturing→OPS fallback no longer escalates a fabricorders:view into manageBOM). Category/recurring/BOM create vs edit vs activate are gated by exact canAction() at each button. Sales Workspace (Preliminary Invoices / Rep Collections / My Funds) is READ-ONLY for Custom and now data-scoped (own|all) with server-enforced salesperson ownership RLS on preliminary_invoices(+lines via parent), rep_collection_submissions, rep_spending and rep_fund_movements (own requires a linked salesperson; no cross-salesperson REST leak). Edge create proves orphan ownership via a SERVER-CONTROLLED app_metadata marker (texcredit_provision_request=request_key) — a profile-less unrelated Auth user is never adopted. Migration 15 (revised in place as 15_user_custom_permissions_4) has NO silent SQL swallow and stays ONE atomic transaction. — was rev21.2: Full final-nav coverage (every nav id maps to a matrix section, is Admin-only, or is a utility — machine-tested); a FINAL navAllowed wrapper makes the per-user matrix the sole authority for Custom users so no role-based module nav wrapper (Expenses/Phase-F/Phase-H/AR/Sales-Rep/section-access) can override matrix granularity — each operational page resolves from its OWN section. Create is NOT edit: canAction(section,action) checks the EXACT action; canEdit() for Custom means edit only; Add vs Edit entry points for Customers/Purchase-Invoices/Cheques use the exact create/edit action. Export is real: exportBtn()/doExport() enforce section:export for Custom via an authoritative provider→section map (hidden button + refused direct call). New matrix sections: Expenses, Advanced Inventory, Phase-H Manufacturing, Sales Workspace. Server (revised additive migration 15 [15_user_custom_permissions_3], ONE atomic transaction on immutable 01-14): own-scope enforced INSIDE the settlement definer RPCs; confirm/reverse guard triggers so a confirm/reverse-only user cannot mutate financial fields; long-tail policy failures on existing tables abort (no silent skip) + postconditions; real expense/BOM tables mapped and RLS-gated. Edge Function create is idempotent/resumable (provisioning state) — same request_key resumes, no duplicate Auth user, changed payload → 409. NO production SQL, NO deployment (review build; revised additive migration 15 [15_user_custom_permissions_2] on immutable 01-14; admin-users Edge Function hardened; NO production SQL, NO deployment). Granular per-page permission matrix (grouped in Users and Access): every meaningful nav page is individually controllable; only enforceable actions are shown (no fake checkboxes). Server enforcement is additive and FAIL CLOSED, scoped to role=Custom: column-free RLS on every mapped table (view/create/edit/delete), status-transition RLS for invoice/return/collection/cheque confirm+reverse, OWN scope on parents AND child tables (invoice_lines/return_lines/settlement allocations via parent), and permission gates added to create/reverse settlement, stock-transfer POST and product/variant delete + eligibility (verbatim migration-13/11/12/14 bodies + one guard OR-branch, accounting byte-for-behavior). Settlements/Audit now honor the matrix for Custom users; generic canEdit() is section-specific (no cross-section bleed); Users and Access stays Administrator-only (not grantable). Legacy users keep EXACT role-based access; on first edit their TRUE effective access (role ∩ user_section_access) is preloaded and only converts to Custom on Save. Administrators are protected (never demoted/reset via this path; last admin preserved). Passwords: server-side createUser with confirmed email (min 8, confirmed), admin-only reset via updateUserById, existing-email create returns 409, never stored/returned/logged/audited. Migrations 01-14 untouched; no accounting/FIFO/inventory/settlement/commission math changed.';
+const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev22.1) — CUSTOMER OVERPAYMENT / UNAPPLIED CREDIT / AUTOMATIC FIFO CREDIT (Migration 16, additive on immutable 01–15). REV22.1 closeout: prior-credit→future-invoice commission now resolves the effective-dated rule at the INVOICE date (0 days), not the original prepayment date; server safe-delete (explicit WHERE) restored; server↔client FIFO parity (invoices→opening debit→charges); cs_customer_credit is internal-only (no scope leak); ledger RLS authorizes against the CURRENT customer owner (survives reassignment); customer_charges/opening_balances triggers + backfill; audit only real before→after credit transitions (no duplicates on idempotent recompute). A collection or Credit settlement MAY now exceed the open debt: the full amount is saved and the excess becomes authoritative, server-side Customer Unapplied Credit (new tables customer_unapplied_credits + customer_credit_applications, write-protected by a rep_priv() guard, maintained ONLY by the deterministic engine cs_recompute_customer_credit via AFTER triggers on invoices/collections/cheques/return_invoices/customer_settlements — so every write path is covered and none can overpay while another rejects). Credit auto-applies FIFO (oldest source first) to invoices the customer receives afterward, at the INVOICE date (0 collection days; existing commission rules unchanged). create_customer_settlement no longer rejects credit>debt; cs_reallocate_customer no longer raises on a credit remainder; cs_customer_debt is byte-unchanged (credit = max(0,-debt), now itemized). Invoice cancel / collection void / settlement reverse atomically replay the FIFO chain (no silent orphan). Concurrency-safe (per-customer advisory lock, no double-consume), retry-idempotent, one atomic migration, no silent SQL swallow. Client: overpayment saves (caps removed on Record Collection + Customer Settlement Credit), customer credit shown as a positive "Customer Unapplied Credit" (Customers List, Profile, Account Statement with source→invoice itemization, AR/Aging with Gross AR / Customer Credit Balances / Net AR) — never a negative Outstanding. — was rev21.5: CUSTOM USER PERMISSIONS · MFG PERSISTENCE HOTFIX. Manufacturing Settings save path: the mfg_settings_get/save RPCs now allow only Administrator + Finance Manager among legacy roles (Accountant and AR Accountant are rejected — no broadening); and securePushSettings routes a Custom user by exact permission — the broad app_settings (general-settings) write runs only with settings:edit, mfg_settings_save runs only with mfgsettings:edit (exactly once), a mfgsettings:edit-only user never attempts the broad write so no false "Cloud save failed" appears on a successful MFG save, while a real mfg_settings_save failure still surfaces; legacy save chain preserved. — was rev21.4: (1) Manufacturing Settings: a Custom mfgsettings:view user sees the page but ZERO mutation controls (Add/Edit/Enable/Disable hidden, tolerance/config inputs disabled) with defense-in-depth canAction(mfgsettings,edit) on openMfgCfgForm/saveMfgCfgForm/mfgCfgToggle/mfgCfgSetting; mfgsettings:edit persists via a narrow SECURITY DEFINER RPC (mfg_settings_save) that writes ONLY the mfgSettings key of app_settings — no general settings:edit needed, no unrelated settings exposed — and a failed secure write now surfaces (no silent swallow). (2) Expense Dashboard/Reports read the underlying data (expenses/expense_payments/expense_categories) when the user has expenses:view OR expensedash:view OR expensereports:view, while the Expenses NAV page still requires expenses:view; no create/edit is granted and direct writes stay rejected. — was rev21.3: Custom users now get FUNCTIONAL (not just visible) capabilities: the Expenses and Phase-H/BOM permission wrappers have exact Custom branches (create≠edit; approve/pay/reverse and production-ops stay ungranted; the old viewManufacturing→OPS fallback no longer escalates a fabricorders:view into manageBOM). Category/recurring/BOM create vs edit vs activate are gated by exact canAction() at each button. Sales Workspace (Preliminary Invoices / Rep Collections / My Funds) is READ-ONLY for Custom and now data-scoped (own|all) with server-enforced salesperson ownership RLS on preliminary_invoices(+lines via parent), rep_collection_submissions, rep_spending and rep_fund_movements (own requires a linked salesperson; no cross-salesperson REST leak). Edge create proves orphan ownership via a SERVER-CONTROLLED app_metadata marker (texcredit_provision_request=request_key) — a profile-less unrelated Auth user is never adopted. Migration 15 (revised in place as 15_user_custom_permissions_4) has NO silent SQL swallow and stays ONE atomic transaction. — was rev21.2: Full final-nav coverage (every nav id maps to a matrix section, is Admin-only, or is a utility — machine-tested); a FINAL navAllowed wrapper makes the per-user matrix the sole authority for Custom users so no role-based module nav wrapper (Expenses/Phase-F/Phase-H/AR/Sales-Rep/section-access) can override matrix granularity — each operational page resolves from its OWN section. Create is NOT edit: canAction(section,action) checks the EXACT action; canEdit() for Custom means edit only; Add vs Edit entry points for Customers/Purchase-Invoices/Cheques use the exact create/edit action. Export is real: exportBtn()/doExport() enforce section:export for Custom via an authoritative provider→section map (hidden button + refused direct call). New matrix sections: Expenses, Advanced Inventory, Phase-H Manufacturing, Sales Workspace. Server (revised additive migration 15 [15_user_custom_permissions_3], ONE atomic transaction on immutable 01-14): own-scope enforced INSIDE the settlement definer RPCs; confirm/reverse guard triggers so a confirm/reverse-only user cannot mutate financial fields; long-tail policy failures on existing tables abort (no silent skip) + postconditions; real expense/BOM tables mapped and RLS-gated. Edge Function create is idempotent/resumable (provisioning state) — same request_key resumes, no duplicate Auth user, changed payload → 409. NO production SQL, NO deployment (review build; revised additive migration 15 [15_user_custom_permissions_2] on immutable 01-14; admin-users Edge Function hardened; NO production SQL, NO deployment). Granular per-page permission matrix (grouped in Users and Access): every meaningful nav page is individually controllable; only enforceable actions are shown (no fake checkboxes). Server enforcement is additive and FAIL CLOSED, scoped to role=Custom: column-free RLS on every mapped table (view/create/edit/delete), status-transition RLS for invoice/return/collection/cheque confirm+reverse, OWN scope on parents AND child tables (invoice_lines/return_lines/settlement allocations via parent), and permission gates added to create/reverse settlement, stock-transfer POST and product/variant delete + eligibility (verbatim migration-13/11/12/14 bodies + one guard OR-branch, accounting byte-for-behavior). Settlements/Audit now honor the matrix for Custom users; generic canEdit() is section-specific (no cross-section bleed); Users and Access stays Administrator-only (not grantable). Legacy users keep EXACT role-based access; on first edit their TRUE effective access (role ∩ user_section_access) is preloaded and only converts to Custom on Save. Administrators are protected (never demoted/reset via this path; last admin preserved). Passwords: server-side createUser with confirmed email (min 8, confirmed), admin-only reset via updateUserById, existing-email create returns 409, never stored/returned/logged/audited. Migrations 01-14 untouched; no accounting/FIFO/inventory/settlement/commission math changed.';
 /*==================================================================================
   TEXTILE CREDIT & COLLECTIONS ERP  —  single-file interactive prototype
   Shared data model + FIFO replay engine. All views derive from one dataset.
@@ -647,6 +647,8 @@ const DB = {
   products:[], productVariants:[], inventoryMovements:[], invoiceLines:[], customCommissions:[],
   // ---- v3 additions: warehouses, batches, transfers, returns, credits ----
   warehouses:[], warehouseStock:[], stockBatches:[], stockTransfers:[], returnInvoices:[], returnLines:[], customerCredits:[],
+  // ---- rev22 · Migration 16: authoritative server-side Customer Unapplied Credit ledger (read-only projection) ----
+  customerUnappliedCredits:[], customerCreditApplications:[],
   // ---- v3.9 Inventory Flexibility: generic Raw Materials + their movement ledger (polled tables); configurable master lists (app_settings) ----
   rawMaterials:[], rawMaterialMovements:[], seqRawMaterial:0, seqRawMovement:0,
   productCategories:['T-Shirts','Polos','Sweatpants','Cargo Pants','Pants','Accessories','Socks','Boxers','Other'],
@@ -1480,6 +1482,13 @@ function rebuild(){
       const cd=Math.max(0,daysBetween(inv.invoiceDate,col.collectionDate));
       const a={id:aId++,collectionId:col.id,invoiceId:inv.id,allocatedAmount:alloc,
         invoiceDate:inv.invoiceDate,collectionDate:col.collectionDate,collectionDays:cd};
+      // rev22.1 blocker 2 — a prepayment/credit whose Collection is dated BEFORE this invoice auto-applies at the
+      // INVOICE's birth: the EARNING date is the INVOICE date (0 collection days), so the effective-dated commission
+      // rule must be the invoice-date rule, NOT the original prepayment-date rule. We keep col.collectionDate as the
+      // audit source (allocation + txn records), and shift ONLY the rule-resolution date via a shallow clone. A normal
+      // collection (on/after the invoice date) is unchanged — _ecol === col, byte-identical behaviour.
+      const _earnDate=(col.collectionDate<inv.invoiceDate)?inv.invoiceDate:col.collectionDate;
+      const _ecol=(_earnDate===col.collectionDate)?col:Object.assign({},col,{collectionDate:_earnDate});
       // v3.3.1 BONUS — computed PER ALLOCATION from THIS allocation's actual collection days (cheque = cleared
       // date, already reflected in col.collectionDate). Rate comes from the configured day-range table (may be
       // negative). Bonus amount = allocated × rate%. This is the ONE bonus number everything else sums.
@@ -1533,7 +1542,7 @@ function rebuild(){
           const dpct=(l.appliedDiscountPercent!=null?l.appliedDiscountPercent:cust.discountPercent);
           const key=col.id+'-'+inv.id+'-'+l.id;
           // ONE resolver via earningSnapshot: recalc-applied → new (override→INVOICE EFFECTIVE discount→rule set→Config Required) → frozen historical.
-          const snap=earningSnapshot(cust,col,dpct,cd,key,false,invCommissionDiscount(inv,cust));
+          const snap=earningSnapshot(cust,_ecol,dpct,cd,key,false,invCommissionDiscount(inv,cust));   // rev22.1 blocker 2: invoice-date rule for prepayment
           const rate=snap.rate;
           const lType=(l.commissionType||commissionTypeFor(l.discountType||'Basic'));
           DB.commissionTxns.push({id:cId++,allocationId:a.id,salespersonId:col.salespersonId,customerId:col.customerId,
@@ -1553,7 +1562,7 @@ function rebuild(){
         // invoice is a frozen/legacy earning by id (created before model activation → legacy repro; created after →
         // new rules). Earning timing/base/attribution unchanged.
         const key=col.id+'-'+inv.id;
-        const snap=earningSnapshot(cust,col,+cust.discountPercent||0,cd,key,isHistoricalInvoice(inv),invCommissionDiscount(inv,cust));
+        const snap=earningSnapshot(cust,_ecol,+cust.discountPercent||0,cd,key,isHistoricalInvoice(inv),invCommissionDiscount(inv,cust));   // rev22.1 blocker 2
         const rate=snap.rate;
         DB.commissionTxns.push({id:cId++,allocationId:a.id,salespersonId:col.salespersonId,customerId:col.customerId,
           invoiceId:inv.id,invoiceLineId:null,collectionId:col.id,allocatedAmount:alloc,collectionDays:cd,
@@ -4065,7 +4074,7 @@ function renderCustTable(rows){
       <td class="num">${egp0(c.creditLimit)}</td>
       <td class="num">${egp0(m.totalSales)}</td>
       <td class="num pos">${egp0(m.collected)}</td>
-      <td class="num t-strong">${egp0(m.outstanding)}</td>
+      <td class="num t-strong">${egp0(m.outstanding)}${m.netDebt<-0.5?`<br><small class="pos" title="${esc(t('Customer Unapplied Credit'))}">+${egp0(-m.netDebt)} ${esc(t('credit'))}</small>`:''}</td>
       <td class="num ${m.availableCredit<0?'neg':''}">${egp0(m.availableCredit)}</td>
       <td class="num">${m.oldest?m.oldestAge+'d':'—'}</td>
       <td class="num">${m.avgDays?Math.round(m.avgDays):'—'}</td>
@@ -4136,6 +4145,7 @@ PAGES.customer=function(p){
     <div class="stat"><div class="lb">${esc(t('Outstanding AR'))}</div><div class="vl">${egp(m.outstanding)}</div><div class="sm">${esc(t('net — after received cheques'))}</div></div>
     <div class="stat"><div class="lb">${esc(t('Cheques Received (pending)'))}</div><div class="vl ${pending>0?'':'muted'}" style="color:${pending>0?'var(--amber-d,#8a5a00)':''}">${egp(pending)}</div><div class="sm">${esc(t('reduce debt · awaiting clearing'))}</div></div>
     <div class="stat"><div class="lb">${esc(t('Net Customer Position'))}</div><div class="vl ${ar.net<-0.5?'pos':(ar.net>0.5?'neg':'')}">${egp(Math.abs(ar.net))}</div><div class="sm">${ar.net>0.5?esc(t('customer owes us')):(ar.net<-0.5?esc(t('customer has credit')):esc(t('settled'))) }</div></div>
+    ${ar.credit>0.5?`<div class="stat"><div class="lb">${esc(t('Customer Unapplied Credit'))}</div><div class="vl pos">${egp(ar.credit)}</div><div class="sm">${esc(t('auto-applied FIFO to future invoices'))}</div></div>`:''}
     <div class="stat"><div class="lb">${esc(t('Available Credit'))}</div><div class="vl ${m.availableCredit<0?'neg':'pos'}">${egp(m.availableCredit)}</div><div class="sm">${m.util.toFixed(0)}% ${esc(t('utilised'))}</div></div>
     ${(ar.openingDebit||ar.openingCredit)?`<div class="stat"><div class="lb">${esc(t('Opening Balance'))}</div><div class="vl ${ar.openingCredit>ar.openingDebit?'pos':''}">${egp(ar.openingDebit||ar.openingCredit)}</div><div class="sm">${ar.openingDebit?esc(t('Debit / مدين')):esc(t('Credit / دائن'))}${ar.openingCredit?(' · '+esc(t('remaining'))+' '+egp0(ar.creditRemaining)):''}</div></div>`:''}
     ${ar.charges>0.5?`<div class="stat"><div class="lb">${esc(t('Customer Expenses'))}</div><div class="vl neg">${egp(ar.charges)}</div><div class="sm">${esc(t('standalone debits — added to the customer debt'))}</div></div>`:''}
@@ -4370,6 +4380,47 @@ function renderCust360Body(c,m){
 }
 // v3.3 — Customer Account Statement (كشف حساب): chronological, running balance, pending cheque column.
 let stmtRange={from:'',to:''}, _stmtCustId=0;
+// rev22 · Migration 16 — Customer Unapplied Credit ledger (authoritative server projection): credit sources
+// (collection/settlement overpayment) and the FIFO applications to later invoices. Read-only; shows where credit
+// came from, which invoice consumed it, and how much remains.
+function invNoById(id){const i=DB.invoices.find(x=>+x.id===+id);return i?i.invoiceNumber:('#'+id);}
+function creditSourceLabel(s){
+  const m={Collection:t('Collection'),Cheque:t('Cheque'),Settlement:t('Credit Settlement'),Opening:t('Opening Credit')};
+  return (m[s.sourceType]||s.sourceType)+(s.sourceId?(' #'+s.sourceId):'');
+}
+function renderCustomerCreditLedger(c){
+  const src=DB.customerUnappliedCredits.filter(x=>x.customerId===c.id).sort((a,b)=>(a.sourceDate-b.sourceDate)||(a.id-b.id));
+  const apps=DB.customerCreditApplications.filter(x=>x.customerId===c.id).sort((a,b)=>(a.applyDate-b.applyDate)||(a.id-b.id));
+  const remaining=round(src.reduce((s,x)=>s+(+x.remainingAmount||0),0),2);
+  const arCredit=customerAR(c.id).credit;
+  if(!src.length && !apps.length && arCredit<=0.5) return '';
+  const srcRows=src.map(s=>`<tr>
+      <td>${esc(creditSourceLabel(s))}</td><td>${s.sourceDate?fmtDate(s.sourceDate):'—'}</td>
+      <td class="num">${egp0(s.creditAmount)}</td><td class="num">${egp0(s.appliedAmount)}</td>
+      <td class="num t-strong ${s.remainingAmount>0.5?'pos':''}">${egp0(s.remainingAmount)}</td></tr>`).join('');
+  const appRows=apps.map(a=>`<tr>
+      <td>${esc(creditSourceLabel({sourceType:a.sourceType,sourceId:a.sourceId}))}</td>
+      <td class="t-strong">${esc(invNoById(a.invoiceId))}</td>
+      <td>${a.applyDate?fmtDate(a.applyDate):'—'}</td>
+      <td class="num">${a.collectionDays} ${esc(t('days'))}</td>
+      <td class="num pos">${egp0(a.amount)}</td></tr>`).join('');
+  return `<div class="card row-gap" style="margin-top:12px"><div class="card-h">
+      <h3>&#128179; ${esc(t('Customer Unapplied Credit'))}</h3>
+      <span class="sub">${esc(t('Remaining'))}: <b class="pos">${egp(remaining)}</b></span></div>
+    <div class="card-b">
+      <div class="section-note" style="font-size:11.5px;background:var(--green-bg,#eafaf0);border-color:#bfe3c9;margin-bottom:8px">
+        ${esc(t('Overpayment on collections and Credit settlements becomes Customer Unapplied Credit and is auto-applied, oldest-first, to future invoices (at the invoice date — 0 collection days).'))}</div>
+      ${src.length?`<div class="tbl-wrap"><table class="tbl"><thead><tr>
+        <th>${esc(t('Credit Source'))}</th><th>${esc(t('Date'))}</th><th class="num">${esc(t('Original Credit'))}</th>
+        <th class="num">${esc(t('Applied'))}</th><th class="num">${esc(t('Remaining'))}</th></tr></thead>
+        <tbody>${srcRows}</tbody></table></div>`:`<div class="empty"><b>${esc(t('No credit sources'))}</b></div>`}
+      ${apps.length?`<div class="kpi-group-h" style="margin-top:10px">${esc(t('Applied to Invoices'))}</div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr>
+        <th>${esc(t('Credit Source'))}</th><th>${esc(t('Invoice'))}</th><th>${esc(t('Settlement Date'))}</th>
+        <th class="num">${esc(t('Collection Days'))}</th><th class="num">${esc(t('Amount'))}</th></tr></thead>
+        <tbody>${appRows}</tbody></table></div>`:''}
+    </div></div>`;
+}
 function renderCustomerStatement(c){
   _stmtCustId=c.id;
   const sum=customerStatementSummary(c);
@@ -4407,6 +4458,7 @@ function renderCustomerStatement(c){
           <td class="muted">${esc(repFirst(r.salespersonId))}</td></tr>`).join(''):`<tr><td colspan="9"><div class="empty"><b>${esc(t('No transactions in this period'))}</b></div></td></tr>`}${(stmtRange.from||stmtRange.to)?(function(){const op=customerStatementOpening(c.id,stmtRange.from);const net=rows.reduce((s,r)=>s+(r.debit-r.credit),0);return `<tr style="background:#f2f6fc;font-weight:800"><td>${esc(t('Closing Balance'))}</td><td></td><td></td><td></td><td class="num">${egp0(rows.reduce((s,r)=>s+r.debit,0))}</td><td class="num">${egp0(rows.reduce((s,r)=>s+r.credit,0))}</td><td></td><td class="num">${egp0(round2(op+net))}</td><td></td></tr>`;})():''}</tbody>
       </table></div>
       <div class="section-note" style="margin-top:8px;font-size:11.5px">${esc(t('Debit = invoices (AR up) · Credit = collections, received cheques & returns (AR down). A RECEIVED cheque reduces the running balance on its received date; CLEARED is shown as a realization event that does NOT reduce AR a second time; BOUNCED / CANCELLED post a reversal that restores the balance. The Uncleared Cheque column flags credits from cheques not yet cleared (informational). Rows are ordered by actual transaction date.'))}</div>
+      ${renderCustomerCreditLedger(c)}
       ${renderChequeRegister(c)}
     </div></div>`;
 }
@@ -4651,7 +4703,16 @@ function renderArTable(){
     <td class="num ${m.aging.b90p?'neg':''}">${m.aging.b90p?egp0(m.aging.b90p):'—'}</td>
     <td class="num">${m.oldestAge}d</td><td class="num">${m.avgDays?Math.round(m.avgDays):'—'}</td></tr>`).join('');
   const tot=rows.reduce((a,{m})=>{AGING_KEYS.forEach(k=>a[k]=(a[k]||0)+m.aging[k]);a.out=(a.out||0)+m.outstanding;return a;},{});
-  document.getElementById('arTable').innerHTML=`<div class="tbl-wrap"><table class="tbl">
+  // rev22 · Migration 16 — distinguish Gross AR (what customers owe) / Customer Credit Balances / Net AR.
+  const _grossAR=round(DB.customers.reduce((s,c)=>s+Math.max(0,customerLedgerBalance(c.id)),0),2);
+  const _creditBal=round(DB.customers.reduce((s,c)=>s+Math.max(0,-customerLedgerBalance(c.id)),0),2);
+  const _netAR=round(_grossAR-_creditBal,2);
+  const _arSummary=`<div class="stat-row row-gap" style="margin-bottom:10px">
+    <div class="stat"><div class="lb">${esc(t('Gross AR'))}</div><div class="vl neg">${egp(_grossAR)}</div><div class="sm">${esc(t('total customer debt'))}</div></div>
+    <div class="stat"><div class="lb">${esc(t('Customer Credit Balances'))}</div><div class="vl pos">${egp(_creditBal)}</div><div class="sm">${esc(t('unapplied credit held for customers'))}</div></div>
+    <div class="stat"><div class="lb">${esc(t('Net AR'))}</div><div class="vl">${egp(_netAR)}</div><div class="sm">${esc(t('gross AR − customer credit'))}</div></div>
+  </div>`;
+  document.getElementById('arTable').innerHTML=_arSummary+`<div class="tbl-wrap"><table class="tbl">
     <thead><tr>${heads.map((h,i)=>`<th class="${i>1?'num':''}">${h}</th>`).join('')}</tr></thead>
     <tbody>${body||`<tr><td colspan="11"><div class="empty"><b>No open balances match</b></div></td></tr>`}</tbody>
     ${rows.length?`<tfoot><tr style="background:#fafbfc;font-weight:700"><td>Total (${rows.length})</td><td></td><td></td>
@@ -5113,25 +5174,25 @@ function updateRcPreview(){
           <div class="flow"><b class="pos">${t('Allocate')} ${egp(a.alloc)}</b><div class="muted" style="font-size:11px">${t('Remaining')} ${egp0(a.newBal)} ${a.newBal<=0.5?'· '+t('settled'):''}</div></div>
         </div>`).join('')}
         ${toOpening>0.5?`<div class="alloc-line settle-part"><div class="inv-b"><b>${esc(t('Opening Balance — Debit'))}</b><small>${esc(t('remaining'))} ${egp0(openingResidual)}</small></div><div class="flow"><b class="pos">${t('Allocate')} ${egp(toOpening)}</b><div class="muted" style="font-size:11px">${esc(t('settles the opening receivable'))}</div></div></div>`:''}
-        ${cents(trueExcess)>0?`<div class="section-note" style="margin:8px 0 0;border-color:#f3c7c7;background:var(--red-bg);color:var(--red)">&#9888; EGP ${egp0(trueExcess)} ${esc(t('exceeds the collectible receivable and cannot be allocated. Reduce the amount.'))}</div>`:''}
+        ${cents(trueExcess)>0?`<div class="section-note" style="margin:8px 0 0;border-color:#bfe3c9;background:var(--green-bg,#eafaf0);color:var(--green,#1a7f3c)">&#10003; EGP ${egp0(trueExcess)} ${esc(t('will be saved as Customer Unapplied Credit and auto-applied to future invoices.'))}</div>`:''}
       </div></div>
       <div class="card"><div class="card-h"><h3>&#128181; Commission Preview</h3></div><div class="card-b">
         ${alloc.map(a=>`<div class="calc-row"><span class="lbl"><b>${a.inv.invoiceNumber}</b> · ${a.days} days · <span class="badge b-blue">${a.rate}%</span></span><span class="val pos">${egp(a.comm)}</span></div>`).join('')}
         <div class="calc-total"><span class="lbl">Total Commission Generated</span><span class="val">${egp(totalComm)}</span></div>
         ${toOpening>0.5?`<div class="section-note" style="margin-top:6px;font-size:11px">${esc(t('The opening-balance portion earns no commission (it is a pre-system receivable).'))}</div>`:''}
       </div></div></div>`;
-    saveBtn.disabled = !(amount>0) || overCollect;
+    saveBtn.disabled = !(amount>0);   // rev22 · Migration 16 — overpayment allowed (excess → customer credit)
   }else if(amount>0&&openingResidual>0.5){
     // opening-debit-only customer — collection settles the opening receivable directly
     const toOpening=Math.min(amount,openingResidual);
     html+=`<div class="card" style="margin-top:14px"><div class="card-h"><h3>&#9889; ${esc(t('Allocation'))}</h3></div><div class="card-b">
       <div class="alloc-line settle-part"><div class="inv-b"><b>${esc(t('Opening Balance — Debit'))}</b><small>${esc(t('remaining'))} ${egp0(openingResidual)}</small></div>
         <div class="flow"><b class="pos">${t('Allocate')} ${egp(toOpening)}</b><div class="muted" style="font-size:11px">${esc(t('settles the opening receivable · no fake invoice · no commission'))}</div></div></div>
-      ${overCollect?`<div class="section-note" style="margin:8px 0 0;border-color:#f3c7c7;background:var(--red-bg);color:var(--red)">&#9888; EGP ${egp0(amount-openingResidual)} ${esc(t('exceeds the collectible receivable and cannot be allocated. Reduce the amount.'))}</div>`:''}
+      ${overCollect?`<div class="section-note" style="margin:8px 0 0;border-color:#bfe3c9;background:var(--green-bg,#eafaf0);color:var(--green,#1a7f3c)">&#10003; EGP ${egp0(amount-openingResidual)} ${esc(t('will be saved as Customer Unapplied Credit and auto-applied to future invoices.'))}</div>`:''}
     </div></div>`;
-    saveBtn.disabled = overCollect;
+    saveBtn.disabled = !(amount>0);   // rev22 · Migration 16 — overpayment allowed (excess → customer credit)
   }else{
-    saveBtn.disabled = !(amount>0&&totalOpen>0.5);
+    saveBtn.disabled = !(amount>0);   // rev22 · Migration 16 — a pure prepayment (no open invoices) is allowed → customer credit
   }
   html+=renderRcBonusPreview(cust,amount,date);   // v3.1.1: live Estimated/Provisional bonus
   box.innerHTML=html;
@@ -5191,7 +5252,9 @@ async function saveRecordCollection(addAnother){
   // v3.6.4 — validate against the full COLLECTIBLE receivable (open invoices + unsettled Debit Opening Balance),
   // not invoices alone. An Opening Debit is a real opening receivable and must be collectible immediately.
   const collectible=customerCollectible(custId).total;
-  if(overCollects(amount,collectible)){toast(t('Amount too high'),t('Collection exceeds the collectible receivable (open invoices + opening debit)'),'err');return;}   // v3.10-followup — cent-exact gate: a full payment equal to the balance ALWAYS saves; only a true over-payment (> balance at the cent) is blocked
+  // v3.26 (rev22 · Migration 16) — OVERPAYMENT IS ALLOWED. A collection may exceed the collectible receivable;
+  // the full amount is saved and the excess becomes authoritative Customer Unapplied Credit (server-side ledger,
+  // auto-applied FIFO to future invoices). The old hard "Amount too high" rejection is removed by design.
   const _openSettle=collectionOpeningSettle(custId,amount).toOpening;   // portion that settles the opening debit (for the audit trail)
   const _destEl=document.getElementById('rc_dest'); let _colDest=null; if(_destEl&&_destEl.value){const pp=_destEl.value.split(':');_colDest={kind:pp[0],id:+pp[1]};}   // Phase C treasury destination (optional)
   // Build the collection ONCE, reuse the SAME id + receipt number across retries (idempotent, no duplicate).
@@ -5426,7 +5489,10 @@ function updateStForm(){
     // the server derives allocations oldest-first over OPEN INVOICE outstanding and caps at min(debt, that
     // outstanding); mirror it here so the UI blocks anything the server would reject (over debt OR unallocatable).
     prev=(cid>0&&amt>0)?settlementAllocPreview(cid,amt):{allocations:[],unapplied:0};
-    overDebt=amt>debt+0.005; overOpen=(prev.unapplied||0)>0.005; over=overDebt||overOpen;
+    // rev22 · Migration 16 — a Credit settlement MAY exceed the debt / the open-invoice outstanding; the excess
+    // becomes authoritative Customer Unapplied Credit. It therefore NEVER blocks (over=false); we keep the flags
+    // only to show the credit-to-be in the context note. (Debit is unchanged: no cap, no allocation.)
+    overDebt=amt>debt+0.005; overOpen=(prev.unapplied||0)>0.005; over=false;
   }   // DEBIT: any positive amount is valid (no cap, no allocation)
   const ok=cid>0 && amt>0 && !!reason && !over;
   const sb=document.getElementById('st_save'); if(sb)sb.disabled=!ok;
@@ -5437,8 +5503,10 @@ function updateStForm(){
         ctx.innerHTML=`<div class="section-note" style="font-size:11.5px;border-color:#f0dca6;background:#fdf6e3">${esc(c?c.name:'')}${c&&c.code?(' · '+esc(c.code)):''} · ${esc(t('Current Debt'))}: <b>${egp(debt)}</b>${amt>0?(' → <b>'+egp(round(debt+amt,2))+'</b>'):''}</div>`;
       } else {
         const allocHtml=prev.allocations.length?('<div style="margin-top:4px;font-size:11px" class="muted">'+esc(t('Applied oldest-first'))+': '+prev.allocations.map(a=>esc(a.invoiceNumber||('#'+a.invoiceId))+' '+egp(a.amount)).join(' · ')+'</div>'):'';
-        const warn=overDebt?esc(t('A settlement cannot exceed the current customer debt.')):(overOpen?esc(t('A settlement cannot exceed the open invoice outstanding.')):'');
-        ctx.innerHTML=`<div class="section-note" style="font-size:11.5px;border-color:${over?'#f3c7c7':'#cfe0f5'};background:${over?'var(--red-bg)':'#eef5fc'};${over?'color:var(--red)':''}">${esc(c?c.name:'')}${c&&c.code?(' · '+esc(c.code)):''} · ${esc(t('Current Debt'))}: <b>${egp(debt)}</b>${(!over&&amt>0)?(' → <b>'+egp(round(debt-amt,2))+'</b>'):''}${over?('<br><b>'+warn+'</b>'):''}</div>${(!over)?allocHtml:''}`;
+        // rev22 · Migration 16 — the unallocatable portion of a Credit settlement becomes Customer Unapplied Credit.
+        const creditToBe=round(Math.max(0,(prev.unapplied||0)),2);
+        const creditHtml=(amt>0&&creditToBe>0.005)?('<div style="margin-top:4px;font-size:11px;color:var(--green,#1a7f3c)"><b>'+esc(t('Customer Unapplied Credit'))+': '+egp(creditToBe)+'</b> · '+esc(t('auto-applied to future invoices'))+'</div>'):'';
+        ctx.innerHTML=`<div class="section-note" style="font-size:11.5px;border-color:#cfe0f5;background:#eef5fc">${esc(c?c.name:'')}${c&&c.code?(' · '+esc(c.code)):''} · ${esc(t('Current Debt'))}: <b>${egp(debt)}</b>${amt>0?(' → <b>'+egp(round(debt-amt,2))+'</b>'):''}</div>${allocHtml}${creditHtml}`;
       }
     } else ctx.innerHTML=''; }
 }
@@ -5458,10 +5526,10 @@ async function saveCustomerSettlement(addAnother){
   const debt=customerCurrentDebt(custId);
   let prev={allocations:[],unapplied:0};
   if(direction==='Credit'){
-    // CREDIT only: caps at min(debt, open-invoice outstanding). DEBIT has no cap and no allocations.
-    if(amount>debt+0.005){ setInvalid('st_amount',true); toast(t('Amount too high'),t('A settlement cannot exceed the current customer debt')+' ('+egp(debt)+')','err'); return; }
+    // rev22 · Migration 16 — a Credit settlement MAY exceed the debt / open-invoice outstanding; the excess becomes
+    // authoritative Customer Unapplied Credit (server ledger). The old hard caps are removed by design. DEBIT is
+    // unchanged (no cap, no allocations). The server (create_customer_settlement) is the authority either way.
     prev=settlementAllocPreview(custId,amount);
-    if((prev.unapplied||0)>0.005){ setInvalid('st_amount',true); toast(t('Amount too high'),t('A settlement cannot exceed the open invoice outstanding.'),'err'); return; }
   }
   const now=entryStamp();
   // blocker 3 — a stable request_key is the DISTRIBUTED identity: reused across retries of the SAME settlement so
@@ -12509,6 +12577,9 @@ const TMAP={
     from:r=>({id:r.id,returnId:r.return_id,originalLineId:r.original_line_id,productId:r.product_id,variantId:r.variant_id,sku:r.sku,color:r.color,size:r.size,returnQty:+r.return_qty||0,unitPrice:+r.unit_price||0,discountType:r.discount_type||'Basic',appliedDiscountPercent:+r.applied_discount_percent||0,grossReturn:+r.gross_return||0,discountAmount:+r.discount_amount||0,netReturn:+r.net_return||0,commissionType:r.commission_type||'Basic'})},
   customer_credits:{to:c=>({id:c.id,customer_id:c.customerId,return_id:c.returnId||null,date:dateToInput(c.date),amount:c.amount,applied_amount:c.appliedAmount||0,notes:c.notes||'',created_by:c.createdBy||''}),
     from:r=>({id:r.id,customerId:r.customer_id,returnId:r.return_id||null,date:parseDateInput(r.date),amount:+r.amount||0,appliedAmount:+r.applied_amount||0,notes:r.notes||'',createdBy:r.created_by||''})},
+  // rev22 · Migration 16 — READ-ONLY authoritative credit ledger (server-maintained; the client never writes these).
+  customer_unapplied_credits:{from:r=>({id:+r.id,customerId:+r.customer_id,salespersonId:r.salesperson_id||null,sourceType:r.source_type||'',sourceId:r.source_id||null,sourceAmount:+r.source_amount||0,creditAmount:+r.credit_amount||0,appliedAmount:+r.applied_amount||0,remainingAmount:+r.remaining_amount||0,sourceDate:parseDateInput(r.source_date),createdAt:r.created_at||''})},
+  customer_credit_applications:{from:r=>({id:+r.id,customerId:+r.customer_id,salespersonId:r.salesperson_id||null,creditId:+r.credit_id,sourceType:r.source_type||'',sourceId:r.source_id||null,invoiceId:+r.invoice_id,amount:+r.amount||0,applyDate:parseDateInput(r.apply_date),collectionDays:+r.collection_days||0,createdAt:r.created_at||''})},
   // v3.1 Change 1 — administrator posted-invoice edit audit trail
   invoice_edits:{to:e=>({id:e.id,invoice_id:e.invoiceId,invoice_number:e.invoiceNumber,admin:e.admin,at:e.at,reason:e.reason,changes:e.changes||[]}),
     from:r=>({id:r.id,invoiceId:r.invoice_id,invoiceNumber:r.invoice_number,admin:r.admin,at:r.at,reason:r.reason,changes:r.changes||[]})},
@@ -12972,12 +13043,12 @@ async function secureLoad(){
     _rows=await Promise.all([
       sbGet('salespersons'),sbGet('customers'),sbGet('invoices'),sbGet('collections'),sbGet('commission_rules'),sbGet('bonus_rules'),
       _catReads[0],_catReads[1],sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
-      sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[])]);
+      sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[]),sbGet('customer_unapplied_credits').catch(()=>[]),sbGet('customer_credit_applications').catch(()=>[])]);
   }catch(e){
     if(_iw){ try{setCloudStatus('error',(e&&e.message)||'catalog read failed');}catch(_){} try{toast(t('Catalog read failed'),t('Cannot load the catalog right now — press Retry Refresh.'),'err');}catch(_){} return false; }   // fail CLOSED: DB.products / DB.productVariants untouched
     throw e;
   }
-  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd]=_rows;
+  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd,cuc,cca]=_rows;
   if(_iw&&_iwCatalog&&(!Array.isArray(pr)||!Array.isArray(pv))){ try{setCloudStatus('error','catalog read returned no data');}catch(_){} try{toast(t('Catalog read failed'),t('Cannot load the catalog right now — press Retry Refresh.'),'err');}catch(_){} return false; }
   DB.salespersons=sp.map(TMAP.salespersons.from);
   DB.customers=cu.map(TMAP.customers.from);
@@ -13000,6 +13071,8 @@ async function secureLoad(){
   DB.returnInvoices=ri.map(TMAP.return_invoices.from);
   DB.returnLines=rl.map(TMAP.return_lines.from);
   DB.customerCredits=cd.map(TMAP.customer_credits.from);
+  DB.customerUnappliedCredits=(cuc||[]).map(TMAP.customer_unapplied_credits.from);   // rev22 · Migration 16 (read-only ledger)
+  DB.customerCreditApplications=(cca||[]).map(TMAP.customer_credit_applications.from);
   try{ const _rm=await sbGet('raw_materials').catch(()=>[]); DB.rawMaterials=(_rm||[]).map(TMAP.raw_materials.from); const _rmv=await sbGet('raw_material_movements').catch(()=>[]); DB.rawMaterialMovements=(_rmv||[]).map(TMAP.raw_material_movements.from); const _rmd=await sbGet('raw_material_docs').catch(()=>[]); DB.rawMaterialDocs=(_rmd||[]).map(TMAP.raw_material_docs.from); }catch(e){}
   try{ const _ip=await sbGet('incentive_payments').catch(()=>[]); if(Array.isArray(_ip))DB.incentivePayments=_ip.map(TMAP.incentive_payments.from); }catch(e){}   // v3.11 salesperson incentive payments
   // v3.2 manufacturing tables (best-effort: a table missing before the migration is applied never breaks load)
@@ -13113,10 +13186,10 @@ async function secureSyncTick(){
     rows=await Promise.all([
       sbGet('salespersons'),sbGet('customers'),sbGet('invoices'),sbGet('collections'),sbGet('commission_rules'),sbGet('bonus_rules'),
       _catReads[0],_catReads[1],sbGet('inventory_movements').catch(()=>[]),sbGet('invoice_lines').catch(()=>[]),sbGet('custom_commissions').catch(()=>[]),
-      sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[])]);
+      sbGet('warehouses').catch(()=>[]),sbGet('warehouse_stock').catch(()=>[]),sbGet('stock_batches').catch(()=>[]),sbGet('stock_transfers').catch(()=>[]),sbGet('return_invoices').catch(()=>[]),sbGet('return_lines').catch(()=>[]),sbGet('customer_credits').catch(()=>[]),sbGet('customer_unapplied_credits').catch(()=>[]),sbGet('customer_credit_applications').catch(()=>[])]);
   }catch(e){ setCloudStatus('error',e.message); return; }   // IU with Catalog ON: strict products/variants rejected → previous catalog kept, tick skipped
   await loadInvAccess();   // v3.26.1 (Scope D) — refresh the Inventory User's cost toggles so an Admin change resolves on the next poll (never stale)
-  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd]=rows;
+  const [sp,cu,iv,co,cr,br,pr,pv,im,il,cc,wh,ws,sb,st,ri,rl,cd,cuc,cca]=rows;
   if(_iw&&_iwCatalog&&(!Array.isArray(pr)||!Array.isArray(pv))){ setCloudStatus('error','catalog read returned no data'); return; }   // Catalog ON: keep the previous catalog; never becomes 0
   const inc={salespersons:sp.map(TMAP.salespersons.from),customers:cu.map(TMAP.customers.from),invoices:iv.map(TMAP.invoices.from),
     collections:co.map(TMAP.collections.from),
@@ -13128,7 +13201,8 @@ async function secureSyncTick(){
     customCommissions:cc.map(TMAP.custom_commissions.from),
     warehouses:wh.map(TMAP.warehouses.from),warehouseStock:ws.map(TMAP.warehouse_stock.from),
     stockBatches:sb.map(TMAP.stock_batches.from),stockTransfers:st.map(TMAP.stock_transfers.from),
-    returnInvoices:ri.map(TMAP.return_invoices.from),returnLines:rl.map(TMAP.return_lines.from),customerCredits:cd.map(TMAP.customer_credits.from)};
+    returnInvoices:ri.map(TMAP.return_invoices.from),returnLines:rl.map(TMAP.return_lines.from),customerCredits:cd.map(TMAP.customer_credits.from),
+    customerUnappliedCredits:(cuc||[]).map(TMAP.customer_unapplied_credits.from),customerCreditApplications:(cca||[]).map(TMAP.customer_credit_applications.from)};   // rev22 · Migration 16
   // v3.2: also pull manufacturing tables into the incremental snapshot (best-effort per table)
   const mfgRows=await Promise.all(MFG_SYNC.map(([tbl])=>sbGet(tbl).catch(()=>null)));
   MFG_SYNC.forEach(([tbl,key],i)=>{ inc[key]=(mfgRows[i]&&Array.isArray(mfgRows[i]))?mfgRows[i].map(TMAP[tbl].from):DB[key]; });
