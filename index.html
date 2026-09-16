@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Textile Credit & Collections ERP</title>
 <style>
 :root{
@@ -397,6 +397,175 @@ html[dir=rtl] .exp-menu{right:auto;left:0}
   #printRoot tfoot{display:table-footer-group}
   #printRoot tr{page-break-inside:avoid}
 }
+
+/* ═══════════════ REV23.8 — MOBILE-FIRST RESPONSIVE SHELL ═══════════════
+   UI-only. No business rules, pricing, permissions, DB, voice or save paths changed. */
+#mobileNavBackdrop{display:none}
+@media screen and (max-width:820px), screen and (pointer:coarse) and (max-width:1180px){
+  html,body{max-width:100%;overflow-x:hidden}
+  body{font-size:14px;-webkit-text-size-adjust:100%}
+  body.mobile-nav-open{overflow:hidden}
+  #app{min-height:100dvh;width:100%}
+
+  /* Off-canvas navigation */
+  #sidebar,#sidebar.collapsed{
+    width:min(86vw,320px)!important;
+    max-width:320px;
+    transform:translateX(-105%);
+    transition:transform .22s ease;
+    box-shadow:0 18px 50px rgba(15,23,41,.28);
+    z-index:151;
+  }
+  #sidebar.mobile-open{transform:translateX(0)}
+  #sidebar.collapsed .btxt,#sidebar.collapsed .nav-label,#sidebar.collapsed .nav-sec{display:block}
+  #sidebar.collapsed .nav-item .badge-n{position:static;margin-left:auto;padding:1px 6px}
+  html[dir=rtl] #sidebar,html[dir=rtl] #sidebar.collapsed{left:auto;right:0;transform:translateX(105%)}
+  html[dir=rtl] #sidebar.mobile-open{transform:translateX(0)}
+  html[dir=rtl] #sidebar.collapsed .nav-item .badge-n{position:static;margin-left:0;margin-right:auto;padding:1px 6px}
+  #mobileNavBackdrop{position:fixed;inset:0;background:rgba(15,23,41,.48);z-index:149;display:none;backdrop-filter:blur(1.5px)}
+  #mobileNavBackdrop.open{display:block}
+
+  /* Main/top bar */
+  #main,#main.collapsed,html[dir=rtl] #main,html[dir=rtl] #main.collapsed{margin:0!important;width:100%;min-width:0}
+  #topbar{height:60px;padding:8px 10px;gap:8px;box-shadow:0 1px 0 rgba(15,23,41,.04)}
+  #toggleSidebar{width:40px;height:40px;min-width:40px;font-size:18px}
+  #topbar .spacer{display:none}
+  .searchbar{flex:1;max-width:none;min-width:0}
+  .searchbar input{height:40px;font-size:16px;padding-left:34px}
+  html[dir=rtl] .searchbar input{padding-left:12px;padding-right:34px}
+  html[dir=rtl] .searchbar .si{left:auto;right:11px}
+  .search-results{position:fixed;top:60px;left:8px;right:8px;max-height:55dvh;border-radius:12px}
+  .company-sel,.date-range,#cloudPill,#dataBtn{display:none!important}
+  #langBtn{width:38px!important;height:40px;padding:0!important;font-size:11px!important;justify-content:center}
+  #notifBtn{width:40px;height:40px;min-width:40px}
+  .topuser{padding:0;gap:0;flex:0 0 auto}
+  .topuser .avatar{width:38px;height:38px}
+  .topuser .u-meta,.topuser .pill-role{display:none}
+
+  /* Page content */
+  #view{padding:14px 10px calc(32px + env(safe-area-inset-bottom))}
+  .page-head{gap:8px;margin-bottom:12px}
+  .page-head>div:first-child{min-width:0;width:100%}
+  .page-head h1{font-size:20px;line-height:1.25}
+  .page-head p{font-size:12px;line-height:1.4}
+  .page-head .ph-actions,html[dir=rtl] .page-head .ph-actions{width:100%;margin:4px 0 0;display:flex;gap:8px;flex-wrap:wrap}
+  .page-head .ph-actions>.btn,.page-head .ph-actions>.exp-wrap{flex:1 1 calc(50% - 4px)}
+  .page-head .ph-actions>.exp-wrap>.btn{width:100%;justify-content:center}
+
+  .btn{min-height:42px;height:42px;padding:0 13px;justify-content:center;touch-action:manipulation}
+  .btn.sm{min-height:38px;height:38px;padding:0 11px}
+  .icon-btn{touch-action:manipulation}
+  .icon-act{width:36px;height:36px}
+
+  .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-bottom:12px}
+  .kpi{padding:12px;border-radius:12px;min-width:0}
+  .kpi .k-label{font-size:10px;letter-spacing:.2px}
+  .kpi .k-val{font-size:18px;margin-top:6px;overflow-wrap:anywhere}
+  .kpi .k-sub{font-size:10.5px}
+  .kpi .k-ic{width:28px;height:28px}
+  .stat-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .stat{padding:11px 12px;min-width:0}
+  .stat .vl{font-size:17px;overflow-wrap:anywhere}
+
+  .grid-2,.grid-2-1,.grid-3{grid-template-columns:1fr;gap:12px}
+  .row-gap{margin-bottom:12px}
+  .card{border-radius:12px}
+  .card-h{padding:12px;align-items:flex-start;flex-wrap:wrap}
+  .card-h h3{font-size:14px}
+  .card-h .sub{font-size:11px}
+  .card-h .right,html[dir=rtl] .card-h .right{margin:0;width:100%;display:flex;gap:7px;overflow-x:auto;padding-bottom:1px}
+  .card-b{padding:12px}
+  .section-note{padding:10px 11px;font-size:12px;margin-bottom:10px}
+  .info-strip{gap:8px 14px;padding:10px 11px}
+
+  /* Filters / tabs */
+  .filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}
+  .filters>.fld{min-width:0}
+  .filters>.fld:nth-child(n){width:auto!important}
+  .filters select.inp,.filters input.inp{width:100%;min-width:0}
+  .filters>.btn,.filters>.exp-wrap{width:100%}
+  .filters>.exp-wrap>.btn{width:100%}
+  select.inp,input.inp{height:42px;font-size:16px;max-width:100%}
+  .tabs{gap:0;margin:0 -2px 12px;padding:0 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{padding:10px 13px;min-height:42px;display:flex;align-items:center}
+  .seg{max-width:100%;overflow-x:auto}
+  .seg-btn{height:40px;padding:0 12px;white-space:nowrap}
+
+  /* Tables remain complete, but become deliberate touch-scroll surfaces instead of squashed layouts */
+  .tbl-wrap{overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch;border-radius:10px;scrollbar-width:thin}
+  table.tbl{width:max-content;min-width:100%;font-size:12.5px}
+  table.tbl th{padding:9px 10px;font-size:10.5px}
+  table.tbl td{padding:9px 10px}
+  table.tbl th.col-act,table.tbl td.row-act{right:0}
+  html[dir=rtl] table.tbl th.col-act,html[dir=rtl] table.tbl td.row-act{right:auto;left:0}
+  .pager{justify-content:center;flex-wrap:wrap;padding-top:10px;gap:6px}
+  .pager .pg-info{width:100%;margin:0;text-align:center;order:2}
+  .pager button{width:38px;height:38px}
+
+  /* Forms: 44px controls + 16px text prevents iPhone zoom and improves touch */
+  .form-grid{grid-template-columns:1fr;gap:11px}
+  .form-row.full{grid-column:auto}
+  .form-row input,.form-row select,.form-row textarea{min-height:44px;height:44px;font-size:16px;width:100%;max-width:100%}
+  .form-row textarea{height:auto;min-height:92px}
+  .modal .form-row{min-width:0!important;width:100%!important}
+  .matrix-inp{min-height:38px;font-size:16px}
+
+  /* Modal = mobile bottom sheet; complex invoice screens get almost full height */
+  .overlay{padding:0;align-items:flex-end}
+  .modal,.modal.lg,.modal.xl{max-width:none;width:100%;max-height:96dvh;border-radius:18px 18px 0 0;animation:mobileSheet .18s ease}
+  @keyframes mobileSheet{from{transform:translateY(24px);opacity:.7}to{transform:none;opacity:1}}
+  .modal-h{padding:13px 14px;flex:0 0 auto}
+  .modal-h h3{font-size:16px}
+  .modal-h .sub{font-size:11px;line-height:1.35}
+  .modal-h .x{width:38px;height:38px;min-width:38px}
+  .modal-b{padding:13px 12px;overscroll-behavior:contain}
+  .modal-f{padding:10px 12px calc(10px + env(safe-area-inset-bottom));gap:8px;flex-wrap:wrap}
+  .modal-f>.btn{flex:1 1 calc(50% - 4px)}
+  .modal-f>.btn.primary{order:-1}
+
+  /* Drawers become true phone panels */
+  .drawer{width:100vw;max-width:none}
+  .drawer-h{padding:13px 14px;padding-top:calc(13px + env(safe-area-inset-top))}
+  .drawer-h .x{width:38px;height:38px}
+  .drawer-b{padding:13px 12px calc(20px + env(safe-area-inset-bottom))}
+
+  /* Dense horizontal blocks */
+  .alloc-line{align-items:flex-start;flex-wrap:wrap;gap:8px;padding:10px 11px}
+  .alloc-line .inv-b{min-width:0;flex:1 1 55%}
+  .alloc-line .flow{flex:1 1 100%;order:3}
+  .alloc-line .amt-tag{margin-inline-start:auto}
+  .fifo-inv{margin-left:10px}
+  html[dir=rtl] .fifo-inv{margin-right:10px;margin-left:0}
+
+  /* Voice review + long inline groups */
+  #pl_voice .card-h{display:block}
+  #pl_voice .card-h .sub{display:block;margin-top:4px}
+  #pl_voice table.tbl{min-width:620px}
+
+  /* Toasts */
+  #toasts,html[dir=rtl] #toasts{left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));align-items:stretch}
+  .toast{min-width:0;max-width:none;width:100%;padding:11px 12px}
+
+  .empty{padding:30px 14px}
+  .chart-box{height:220px}
+  .chart-box.sm{height:190px}
+}
+
+@media screen and (max-width:480px), screen and (pointer:coarse) and (max-width:1180px) and (max-device-width:600px){
+  #topbar{padding-inline:8px;gap:6px}
+  #langBtn{display:none!important}
+  .kpi-grid,.stat-row{grid-template-columns:1fr 1fr}
+  .filters{grid-template-columns:1fr}
+  .page-head .ph-actions>.btn,.page-head .ph-actions>.exp-wrap{flex-basis:100%}
+  .modal-f>.btn{flex-basis:100%}
+}
+
+@media screen and (max-width:350px), screen and (pointer:coarse) and (max-device-width:350px){
+  .kpi-grid,.stat-row{grid-template-columns:1fr}
+  #notifBtn{display:none}
+}
+
 </style>
 </head>
 <body>
@@ -409,6 +578,7 @@ html[dir=rtl] .exp-menu{right:auto;left:0}
     <nav class="nav" id="nav"></nav>
     <div class="side-foot" id="sideFoot"></div>
   </aside>
+  <div id="mobileNavBackdrop" aria-hidden="true"></div>
   <div id="main">
     <header id="topbar">
       <button class="icon-btn" id="toggleSidebar" title="Collapse menu">&#9776;</button>
@@ -462,7 +632,7 @@ html[dir=rtl] .exp-menu{right:auto;left:0}
 /* TexCredit build: v3.13.1 — Arabic/RTL Correction (was v3.13 Consolidated Search / Filters / Windows (Arabic RTL search fix + Salesperson
    Performance filters + Customer Statement/Collections/Cheques/Invoices month filters). Source: v3.12 Cheque
    Date Cleanup. Additive, non-destructive. */
-const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev23.7) — CATALOG-GROUNDED VOICE SPELLING: actual TexCredit catalog spellings from the 16-Sep stock export are used to normalize Egyptian speech (especially نص كم↔1/2كم), while rev23.6 STT-confusion aliases + dozen rules + rev23.5 customer autopick remain — was rev23.6: VOICE EGYPTIAN VOCAB MATCHING: normalizes spoken Egyptian number words to digits for catalog matching (e.g. اتنين→2, سبعة→7), treats dozen words as quantity filler, and adds safe voice-only aliases for common STT confusions (شرط↔شورت, لكرة↔ليكرا) while preserving rev23.5 customer autopick + rev23.4 exact-match rules — was rev23.5: VOICE CUSTOMER AUTOPICK + rev23.4 PRODUCT EXACT-MATCH AUTOSELECT: a unique deterministic product-name + color + size match is auto-selected even when weaker catalog candidates also exist; true duplicate exact matches still require Review — was rev23.3: VOICE INVOICE TIMEOUT-CONTRACT FIX: the client → Edge abort timer is raised from 45s to 75s so it can no longer fire BEFORE the Edge finishes its documented worst-case pipeline (30s transcription + 30s extraction + ~2s auth ≈ 62s) — a valid slow request is no longer aborted by the browser prematurely; Cancel/modal-close still abort immediately, and timeout/error still leaves the draft untouched with a late-response guard. (Deploy config: voice-invoice verify_jwt=true — gateway JWT verification restored as defense-in-depth; the browser CORS OPTIONS preflight is allowed through by the Supabase runtime, and handler auth+role authorization remain mandatory.) — was rev23.2: VOICE INVOICE APPLY-ATOMICITY FIX: voiceApply now preflight-validates EVERY non-skipped reviewed item (variant resolves + still selectable, qty>=1, unit price>0 — same minimums as manual entry) and BUILDS all lines before any mutation; if one fails, nothing is added, no replace, the draft AND review are preserved, the row is flagged, Apply stays blocked, no success toast — a resolved item can no longer be silently dropped. — was rev23.1: VOICE INVOICE HARDENING (confidence-aware safe matching; no silent line drop — resolve or Remove; server-side feature authorization in the Edge Function; robust recording cleanup/abort/timeout with a stale-response guard). — was rev23: VOICE INVOICE (Voice → Preliminary Invoice): a 🎙️ Voice Invoice action inside Create Preliminary Invoice lets a salesperson dictate items (Egyptian/Modern Arabic, English, mixed); a server-side voice-invoice Edge Function transcribes + extracts a STRUCTURED, NON-authoritative draft (no AI key in client), the client resolves every item against the REAL active catalog (never invents products/prices), shows a Review panel (transcript + matched/ambiguous/not-found), and on Apply injects lines through the EXACT manual _pd.lines path (same pricing/validation/permissions/save) — never auto-submits, never bypasses price/permission rules, preserves the existing draft, and degrades gracefully offline. No DB change; migrations 01–16 and admin-users untouched. — was rev22.1: CUSTOMER OVERPAYMENT / UNAPPLIED CREDIT / AUTOMATIC FIFO CREDIT (Migration 16, additive on immutable 01–15). REV22.1 closeout: prior-credit→future-invoice commission now resolves the effective-dated rule at the INVOICE date (0 days), not the original prepayment date; server safe-delete (explicit WHERE) restored; server↔client FIFO parity (invoices→opening debit→charges); cs_customer_credit is internal-only (no scope leak); ledger RLS authorizes against the CURRENT customer owner (survives reassignment); customer_charges/opening_balances triggers + backfill; audit only real before→after credit transitions (no duplicates on idempotent recompute). A collection or Credit settlement MAY now exceed the open debt: the full amount is saved and the excess becomes authoritative, server-side Customer Unapplied Credit (new tables customer_unapplied_credits + customer_credit_applications, write-protected by a rep_priv() guard, maintained ONLY by the deterministic engine cs_recompute_customer_credit via AFTER triggers on invoices/collections/cheques/return_invoices/customer_settlements — so every write path is covered and none can overpay while another rejects). Credit auto-applies FIFO (oldest source first) to invoices the customer receives afterward, at the INVOICE date (0 collection days; existing commission rules unchanged). create_customer_settlement no longer rejects credit>debt; cs_reallocate_customer no longer raises on a credit remainder; cs_customer_debt is byte-unchanged (credit = max(0,-debt), now itemized). Invoice cancel / collection void / settlement reverse atomically replay the FIFO chain (no silent orphan). Concurrency-safe (per-customer advisory lock, no double-consume), retry-idempotent, one atomic migration, no silent SQL swallow. Client: overpayment saves (caps removed on Record Collection + Customer Settlement Credit), customer credit shown as a positive "Customer Unapplied Credit" (Customers List, Profile, Account Statement with source→invoice itemization, AR/Aging with Gross AR / Customer Credit Balances / Net AR) — never a negative Outstanding. — was rev21.5: CUSTOM USER PERMISSIONS · MFG PERSISTENCE HOTFIX. Manufacturing Settings save path: the mfg_settings_get/save RPCs now allow only Administrator + Finance Manager among legacy roles (Accountant and AR Accountant are rejected — no broadening); and securePushSettings routes a Custom user by exact permission — the broad app_settings (general-settings) write runs only with settings:edit, mfg_settings_save runs only with mfgsettings:edit (exactly once), a mfgsettings:edit-only user never attempts the broad write so no false "Cloud save failed" appears on a successful MFG save, while a real mfg_settings_save failure still surfaces; legacy save chain preserved. — was rev21.4: (1) Manufacturing Settings: a Custom mfgsettings:view user sees the page but ZERO mutation controls (Add/Edit/Enable/Disable hidden, tolerance/config inputs disabled) with defense-in-depth canAction(mfgsettings,edit) on openMfgCfgForm/saveMfgCfgForm/mfgCfgToggle/mfgCfgSetting; mfgsettings:edit persists via a narrow SECURITY DEFINER RPC (mfg_settings_save) that writes ONLY the mfgSettings key of app_settings — no general settings:edit needed, no unrelated settings exposed — and a failed secure write now surfaces (no silent swallow). (2) Expense Dashboard/Reports read the underlying data (expenses/expense_payments/expense_categories) when the user has expenses:view OR expensedash:view OR expensereports:view, while the Expenses NAV page still requires expenses:view; no create/edit is granted and direct writes stay rejected. — was rev21.3: Custom users now get FUNCTIONAL (not just visible) capabilities: the Expenses and Phase-H/BOM permission wrappers have exact Custom branches (create≠edit; approve/pay/reverse and production-ops stay ungranted; the old viewManufacturing→OPS fallback no longer escalates a fabricorders:view into manageBOM). Category/recurring/BOM create vs edit vs activate are gated by exact canAction() at each button. Sales Workspace (Preliminary Invoices / Rep Collections / My Funds) is READ-ONLY for Custom and now data-scoped (own|all) with server-enforced salesperson ownership RLS on preliminary_invoices(+lines via parent), rep_collection_submissions, rep_spending and rep_fund_movements (own requires a linked salesperson; no cross-salesperson REST leak). Edge create proves orphan ownership via a SERVER-CONTROLLED app_metadata marker (texcredit_provision_request=request_key) — a profile-less unrelated Auth user is never adopted. Migration 15 (revised in place as 15_user_custom_permissions_4) has NO silent SQL swallow and stays ONE atomic transaction. — was rev21.2: Full final-nav coverage (every nav id maps to a matrix section, is Admin-only, or is a utility — machine-tested); a FINAL navAllowed wrapper makes the per-user matrix the sole authority for Custom users so no role-based module nav wrapper (Expenses/Phase-F/Phase-H/AR/Sales-Rep/section-access) can override matrix granularity — each operational page resolves from its OWN section. Create is NOT edit: canAction(section,action) checks the EXACT action; canEdit() for Custom means edit only; Add vs Edit entry points for Customers/Purchase-Invoices/Cheques use the exact create/edit action. Export is real: exportBtn()/doExport() enforce section:export for Custom via an authoritative provider→section map (hidden button + refused direct call). New matrix sections: Expenses, Advanced Inventory, Phase-H Manufacturing, Sales Workspace. Server (revised additive migration 15 [15_user_custom_permissions_3], ONE atomic transaction on immutable 01-14): own-scope enforced INSIDE the settlement definer RPCs; confirm/reverse guard triggers so a confirm/reverse-only user cannot mutate financial fields; long-tail policy failures on existing tables abort (no silent skip) + postconditions; real expense/BOM tables mapped and RLS-gated. Edge Function create is idempotent/resumable (provisioning state) — same request_key resumes, no duplicate Auth user, changed payload → 409. NO production SQL, NO deployment (review build; revised additive migration 15 [15_user_custom_permissions_2] on immutable 01-14; admin-users Edge Function hardened; NO production SQL, NO deployment). Granular per-page permission matrix (grouped in Users and Access): every meaningful nav page is individually controllable; only enforceable actions are shown (no fake checkboxes). Server enforcement is additive and FAIL CLOSED, scoped to role=Custom: column-free RLS on every mapped table (view/create/edit/delete), status-transition RLS for invoice/return/collection/cheque confirm+reverse, OWN scope on parents AND child tables (invoice_lines/return_lines/settlement allocations via parent), and permission gates added to create/reverse settlement, stock-transfer POST and product/variant delete + eligibility (verbatim migration-13/11/12/14 bodies + one guard OR-branch, accounting byte-for-behavior). Settlements/Audit now honor the matrix for Custom users; generic canEdit() is section-specific (no cross-section bleed); Users and Access stays Administrator-only (not grantable). Legacy users keep EXACT role-based access; on first edit their TRUE effective access (role ∩ user_section_access) is preloaded and only converts to Custom on Save. Administrators are protected (never demoted/reset via this path; last admin preserved). Passwords: server-side createUser with confirmed email (min 8, confirmed), admin-only reset via updateUserById, existing-email create returns 409, never stored/returned/logged/audited. Migrations 01-14 untouched; no accounting/FIFO/inventory/settlement/commission math changed.';
+const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev23.9) — MOBILE BREAKPOINT FALLBACK: phone/touch layouts now trigger even when Android Chrome reports a desktop-like CSS viewport, preserving the rev23.8 responsive shell; UI-only, no business/DB/voice changes — was rev23.8: MOBILE-FIRST RESPONSIVE UI: off-canvas phone navigation, compact mobile topbar, touch-sized forms/actions, deliberate table scrolling, bottom-sheet modals, full-width drawers, safe-area support; UI-only with no business/DB/voice logic changes — was rev23.7: CATALOG-GROUNDED VOICE SPELLING: actual TexCredit catalog spellings from the 16-Sep stock export are used to normalize Egyptian speech (especially نص كم↔1/2كم), while rev23.6 STT-confusion aliases + dozen rules + rev23.5 customer autopick remain — was rev23.6: VOICE EGYPTIAN VOCAB MATCHING: normalizes spoken Egyptian number words to digits for catalog matching (e.g. اتنين→2, سبعة→7), treats dozen words as quantity filler, and adds safe voice-only aliases for common STT confusions (شرط↔شورت, لكرة↔ليكرا) while preserving rev23.5 customer autopick + rev23.4 exact-match rules — was rev23.5: VOICE CUSTOMER AUTOPICK + rev23.4 PRODUCT EXACT-MATCH AUTOSELECT: a unique deterministic product-name + color + size match is auto-selected even when weaker catalog candidates also exist; true duplicate exact matches still require Review — was rev23.3: VOICE INVOICE TIMEOUT-CONTRACT FIX: the client → Edge abort timer is raised from 45s to 75s so it can no longer fire BEFORE the Edge finishes its documented worst-case pipeline (30s transcription + 30s extraction + ~2s auth ≈ 62s) — a valid slow request is no longer aborted by the browser prematurely; Cancel/modal-close still abort immediately, and timeout/error still leaves the draft untouched with a late-response guard. (Deploy config: voice-invoice verify_jwt=true — gateway JWT verification restored as defense-in-depth; the browser CORS OPTIONS preflight is allowed through by the Supabase runtime, and handler auth+role authorization remain mandatory.) — was rev23.2: VOICE INVOICE APPLY-ATOMICITY FIX: voiceApply now preflight-validates EVERY non-skipped reviewed item (variant resolves + still selectable, qty>=1, unit price>0 — same minimums as manual entry) and BUILDS all lines before any mutation; if one fails, nothing is added, no replace, the draft AND review are preserved, the row is flagged, Apply stays blocked, no success toast — a resolved item can no longer be silently dropped. — was rev23.1: VOICE INVOICE HARDENING (confidence-aware safe matching; no silent line drop — resolve or Remove; server-side feature authorization in the Edge Function; robust recording cleanup/abort/timeout with a stale-response guard). — was rev23: VOICE INVOICE (Voice → Preliminary Invoice): a 🎙️ Voice Invoice action inside Create Preliminary Invoice lets a salesperson dictate items (Egyptian/Modern Arabic, English, mixed); a server-side voice-invoice Edge Function transcribes + extracts a STRUCTURED, NON-authoritative draft (no AI key in client), the client resolves every item against the REAL active catalog (never invents products/prices), shows a Review panel (transcript + matched/ambiguous/not-found), and on Apply injects lines through the EXACT manual _pd.lines path (same pricing/validation/permissions/save) — never auto-submits, never bypasses price/permission rules, preserves the existing draft, and degrades gracefully offline. No DB change; migrations 01–16 and admin-users untouched. — was rev22.1: CUSTOMER OVERPAYMENT / UNAPPLIED CREDIT / AUTOMATIC FIFO CREDIT (Migration 16, additive on immutable 01–15). REV22.1 closeout: prior-credit→future-invoice commission now resolves the effective-dated rule at the INVOICE date (0 days), not the original prepayment date; server safe-delete (explicit WHERE) restored; server↔client FIFO parity (invoices→opening debit→charges); cs_customer_credit is internal-only (no scope leak); ledger RLS authorizes against the CURRENT customer owner (survives reassignment); customer_charges/opening_balances triggers + backfill; audit only real before→after credit transitions (no duplicates on idempotent recompute). A collection or Credit settlement MAY now exceed the open debt: the full amount is saved and the excess becomes authoritative, server-side Customer Unapplied Credit (new tables customer_unapplied_credits + customer_credit_applications, write-protected by a rep_priv() guard, maintained ONLY by the deterministic engine cs_recompute_customer_credit via AFTER triggers on invoices/collections/cheques/return_invoices/customer_settlements — so every write path is covered and none can overpay while another rejects). Credit auto-applies FIFO (oldest source first) to invoices the customer receives afterward, at the INVOICE date (0 collection days; existing commission rules unchanged). create_customer_settlement no longer rejects credit>debt; cs_reallocate_customer no longer raises on a credit remainder; cs_customer_debt is byte-unchanged (credit = max(0,-debt), now itemized). Invoice cancel / collection void / settlement reverse atomically replay the FIFO chain (no silent orphan). Concurrency-safe (per-customer advisory lock, no double-consume), retry-idempotent, one atomic migration, no silent SQL swallow. Client: overpayment saves (caps removed on Record Collection + Customer Settlement Credit), customer credit shown as a positive "Customer Unapplied Credit" (Customers List, Profile, Account Statement with source→invoice itemization, AR/Aging with Gross AR / Customer Credit Balances / Net AR) — never a negative Outstanding. — was rev21.5: CUSTOM USER PERMISSIONS · MFG PERSISTENCE HOTFIX. Manufacturing Settings save path: the mfg_settings_get/save RPCs now allow only Administrator + Finance Manager among legacy roles (Accountant and AR Accountant are rejected — no broadening); and securePushSettings routes a Custom user by exact permission — the broad app_settings (general-settings) write runs only with settings:edit, mfg_settings_save runs only with mfgsettings:edit (exactly once), a mfgsettings:edit-only user never attempts the broad write so no false "Cloud save failed" appears on a successful MFG save, while a real mfg_settings_save failure still surfaces; legacy save chain preserved. — was rev21.4: (1) Manufacturing Settings: a Custom mfgsettings:view user sees the page but ZERO mutation controls (Add/Edit/Enable/Disable hidden, tolerance/config inputs disabled) with defense-in-depth canAction(mfgsettings,edit) on openMfgCfgForm/saveMfgCfgForm/mfgCfgToggle/mfgCfgSetting; mfgsettings:edit persists via a narrow SECURITY DEFINER RPC (mfg_settings_save) that writes ONLY the mfgSettings key of app_settings — no general settings:edit needed, no unrelated settings exposed — and a failed secure write now surfaces (no silent swallow). (2) Expense Dashboard/Reports read the underlying data (expenses/expense_payments/expense_categories) when the user has expenses:view OR expensedash:view OR expensereports:view, while the Expenses NAV page still requires expenses:view; no create/edit is granted and direct writes stay rejected. — was rev21.3: Custom users now get FUNCTIONAL (not just visible) capabilities: the Expenses and Phase-H/BOM permission wrappers have exact Custom branches (create≠edit; approve/pay/reverse and production-ops stay ungranted; the old viewManufacturing→OPS fallback no longer escalates a fabricorders:view into manageBOM). Category/recurring/BOM create vs edit vs activate are gated by exact canAction() at each button. Sales Workspace (Preliminary Invoices / Rep Collections / My Funds) is READ-ONLY for Custom and now data-scoped (own|all) with server-enforced salesperson ownership RLS on preliminary_invoices(+lines via parent), rep_collection_submissions, rep_spending and rep_fund_movements (own requires a linked salesperson; no cross-salesperson REST leak). Edge create proves orphan ownership via a SERVER-CONTROLLED app_metadata marker (texcredit_provision_request=request_key) — a profile-less unrelated Auth user is never adopted. Migration 15 (revised in place as 15_user_custom_permissions_4) has NO silent SQL swallow and stays ONE atomic transaction. — was rev21.2: Full final-nav coverage (every nav id maps to a matrix section, is Admin-only, or is a utility — machine-tested); a FINAL navAllowed wrapper makes the per-user matrix the sole authority for Custom users so no role-based module nav wrapper (Expenses/Phase-F/Phase-H/AR/Sales-Rep/section-access) can override matrix granularity — each operational page resolves from its OWN section. Create is NOT edit: canAction(section,action) checks the EXACT action; canEdit() for Custom means edit only; Add vs Edit entry points for Customers/Purchase-Invoices/Cheques use the exact create/edit action. Export is real: exportBtn()/doExport() enforce section:export for Custom via an authoritative provider→section map (hidden button + refused direct call). New matrix sections: Expenses, Advanced Inventory, Phase-H Manufacturing, Sales Workspace. Server (revised additive migration 15 [15_user_custom_permissions_3], ONE atomic transaction on immutable 01-14): own-scope enforced INSIDE the settlement definer RPCs; confirm/reverse guard triggers so a confirm/reverse-only user cannot mutate financial fields; long-tail policy failures on existing tables abort (no silent skip) + postconditions; real expense/BOM tables mapped and RLS-gated. Edge Function create is idempotent/resumable (provisioning state) — same request_key resumes, no duplicate Auth user, changed payload → 409. NO production SQL, NO deployment (review build; revised additive migration 15 [15_user_custom_permissions_2] on immutable 01-14; admin-users Edge Function hardened; NO production SQL, NO deployment). Granular per-page permission matrix (grouped in Users and Access): every meaningful nav page is individually controllable; only enforceable actions are shown (no fake checkboxes). Server enforcement is additive and FAIL CLOSED, scoped to role=Custom: column-free RLS on every mapped table (view/create/edit/delete), status-transition RLS for invoice/return/collection/cheque confirm+reverse, OWN scope on parents AND child tables (invoice_lines/return_lines/settlement allocations via parent), and permission gates added to create/reverse settlement, stock-transfer POST and product/variant delete + eligibility (verbatim migration-13/11/12/14 bodies + one guard OR-branch, accounting byte-for-behavior). Settlements/Audit now honor the matrix for Custom users; generic canEdit() is section-specific (no cross-section bleed); Users and Access stays Administrator-only (not grantable). Legacy users keep EXACT role-based access; on first edit their TRUE effective access (role ∩ user_section_access) is preloaded and only converts to Custom on Save. Administrators are protected (never demoted/reset via this path; last admin preserved). Passwords: server-side createUser with confirmed email (min 8, confirmed), admin-only reset via updateUserById, existing-email create returns 409, never stored/returned/logged/audited. Migrations 01-14 untouched; no accounting/FIFO/inventory/settlement/commission math changed.';
 /*==================================================================================
   TEXTILE CREDIT & COLLECTIONS ERP  —  single-file interactive prototype
   Shared data model + FIFO replay engine. All views derive from one dataset.
@@ -25781,10 +25951,28 @@ rebuild();renderNav();
 // v3.4: while a long-lived session is open, re-check hourly so a cheque due today clears without a reload.
 setInterval(()=>{ try{ const rolled=refreshToday(); const cleared=autoClearDueCheques()>0; if(rolled||cleared){renderNav();refreshCurrent();} }catch(e){} }, 60*60*1000);
 
+// REV23.8 — responsive navigation: desktop keeps collapse; phone uses an off-canvas drawer.
+const _mobileNavMq=window.matchMedia('(max-width:820px), (pointer:coarse) and (max-width:1180px)');
+function setMobileNav(open){
+  const sb=document.getElementById('sidebar'),bd=document.getElementById('mobileNavBackdrop');
+  if(!sb||!bd)return;
+  sb.classList.toggle('mobile-open',!!open);
+  bd.classList.toggle('open',!!open);
+  document.body.classList.toggle('mobile-nav-open',!!open);
+  document.getElementById('toggleSidebar')?.setAttribute('aria-expanded',open?'true':'false');
+}
 document.getElementById('toggleSidebar').onclick=function(){
-  document.getElementById('sidebar').classList.toggle('collapsed');
-  document.getElementById('main').classList.toggle('collapsed');
+  if(_mobileNavMq.matches){
+    setMobileNav(!document.getElementById('sidebar').classList.contains('mobile-open'));
+  }else{
+    document.getElementById('sidebar').classList.toggle('collapsed');
+    document.getElementById('main').classList.toggle('collapsed');
+  }
 };
+document.getElementById('mobileNavBackdrop').onclick=()=>setMobileNav(false);
+document.getElementById('nav').addEventListener('click',e=>{ if(_mobileNavMq.matches&&e.target.closest('.nav-item'))setMobileNav(false); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&_mobileNavMq.matches)setMobileNav(false); });
+_mobileNavMq.addEventListener?.('change',e=>{ if(!e.matches)setMobileNav(false); });
 const gs=document.getElementById('globalSearch');
 gs.addEventListener('input',e=>runSearch(e.target.value));
 gs.addEventListener('focus',e=>{if(e.target.value)runSearch(e.target.value);});
