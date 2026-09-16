@@ -462,7 +462,7 @@ html[dir=rtl] .exp-menu{right:auto;left:0}
 /* TexCredit build: v3.13.1 — Arabic/RTL Correction (was v3.13 Consolidated Search / Filters / Windows (Arabic RTL search fix + Salesperson
    Performance filters + Customer Statement/Collections/Cheques/Invoices month filters). Source: v3.12 Cheque
    Date Cleanup. Additive, non-destructive. */
-const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev22.1) — CUSTOMER OVERPAYMENT / UNAPPLIED CREDIT / AUTOMATIC FIFO CREDIT (Migration 16, additive on immutable 01–15). REV22.1 closeout: prior-credit→future-invoice commission now resolves the effective-dated rule at the INVOICE date (0 days), not the original prepayment date; server safe-delete (explicit WHERE) restored; server↔client FIFO parity (invoices→opening debit→charges); cs_customer_credit is internal-only (no scope leak); ledger RLS authorizes against the CURRENT customer owner (survives reassignment); customer_charges/opening_balances triggers + backfill; audit only real before→after credit transitions (no duplicates on idempotent recompute). A collection or Credit settlement MAY now exceed the open debt: the full amount is saved and the excess becomes authoritative, server-side Customer Unapplied Credit (new tables customer_unapplied_credits + customer_credit_applications, write-protected by a rep_priv() guard, maintained ONLY by the deterministic engine cs_recompute_customer_credit via AFTER triggers on invoices/collections/cheques/return_invoices/customer_settlements — so every write path is covered and none can overpay while another rejects). Credit auto-applies FIFO (oldest source first) to invoices the customer receives afterward, at the INVOICE date (0 collection days; existing commission rules unchanged). create_customer_settlement no longer rejects credit>debt; cs_reallocate_customer no longer raises on a credit remainder; cs_customer_debt is byte-unchanged (credit = max(0,-debt), now itemized). Invoice cancel / collection void / settlement reverse atomically replay the FIFO chain (no silent orphan). Concurrency-safe (per-customer advisory lock, no double-consume), retry-idempotent, one atomic migration, no silent SQL swallow. Client: overpayment saves (caps removed on Record Collection + Customer Settlement Credit), customer credit shown as a positive "Customer Unapplied Credit" (Customers List, Profile, Account Statement with source→invoice itemization, AR/Aging with Gross AR / Customer Credit Balances / Net AR) — never a negative Outstanding. — was rev21.5: CUSTOM USER PERMISSIONS · MFG PERSISTENCE HOTFIX. Manufacturing Settings save path: the mfg_settings_get/save RPCs now allow only Administrator + Finance Manager among legacy roles (Accountant and AR Accountant are rejected — no broadening); and securePushSettings routes a Custom user by exact permission — the broad app_settings (general-settings) write runs only with settings:edit, mfg_settings_save runs only with mfgsettings:edit (exactly once), a mfgsettings:edit-only user never attempts the broad write so no false "Cloud save failed" appears on a successful MFG save, while a real mfg_settings_save failure still surfaces; legacy save chain preserved. — was rev21.4: (1) Manufacturing Settings: a Custom mfgsettings:view user sees the page but ZERO mutation controls (Add/Edit/Enable/Disable hidden, tolerance/config inputs disabled) with defense-in-depth canAction(mfgsettings,edit) on openMfgCfgForm/saveMfgCfgForm/mfgCfgToggle/mfgCfgSetting; mfgsettings:edit persists via a narrow SECURITY DEFINER RPC (mfg_settings_save) that writes ONLY the mfgSettings key of app_settings — no general settings:edit needed, no unrelated settings exposed — and a failed secure write now surfaces (no silent swallow). (2) Expense Dashboard/Reports read the underlying data (expenses/expense_payments/expense_categories) when the user has expenses:view OR expensedash:view OR expensereports:view, while the Expenses NAV page still requires expenses:view; no create/edit is granted and direct writes stay rejected. — was rev21.3: Custom users now get FUNCTIONAL (not just visible) capabilities: the Expenses and Phase-H/BOM permission wrappers have exact Custom branches (create≠edit; approve/pay/reverse and production-ops stay ungranted; the old viewManufacturing→OPS fallback no longer escalates a fabricorders:view into manageBOM). Category/recurring/BOM create vs edit vs activate are gated by exact canAction() at each button. Sales Workspace (Preliminary Invoices / Rep Collections / My Funds) is READ-ONLY for Custom and now data-scoped (own|all) with server-enforced salesperson ownership RLS on preliminary_invoices(+lines via parent), rep_collection_submissions, rep_spending and rep_fund_movements (own requires a linked salesperson; no cross-salesperson REST leak). Edge create proves orphan ownership via a SERVER-CONTROLLED app_metadata marker (texcredit_provision_request=request_key) — a profile-less unrelated Auth user is never adopted. Migration 15 (revised in place as 15_user_custom_permissions_4) has NO silent SQL swallow and stays ONE atomic transaction. — was rev21.2: Full final-nav coverage (every nav id maps to a matrix section, is Admin-only, or is a utility — machine-tested); a FINAL navAllowed wrapper makes the per-user matrix the sole authority for Custom users so no role-based module nav wrapper (Expenses/Phase-F/Phase-H/AR/Sales-Rep/section-access) can override matrix granularity — each operational page resolves from its OWN section. Create is NOT edit: canAction(section,action) checks the EXACT action; canEdit() for Custom means edit only; Add vs Edit entry points for Customers/Purchase-Invoices/Cheques use the exact create/edit action. Export is real: exportBtn()/doExport() enforce section:export for Custom via an authoritative provider→section map (hidden button + refused direct call). New matrix sections: Expenses, Advanced Inventory, Phase-H Manufacturing, Sales Workspace. Server (revised additive migration 15 [15_user_custom_permissions_3], ONE atomic transaction on immutable 01-14): own-scope enforced INSIDE the settlement definer RPCs; confirm/reverse guard triggers so a confirm/reverse-only user cannot mutate financial fields; long-tail policy failures on existing tables abort (no silent skip) + postconditions; real expense/BOM tables mapped and RLS-gated. Edge Function create is idempotent/resumable (provisioning state) — same request_key resumes, no duplicate Auth user, changed payload → 409. NO production SQL, NO deployment (review build; revised additive migration 15 [15_user_custom_permissions_2] on immutable 01-14; admin-users Edge Function hardened; NO production SQL, NO deployment). Granular per-page permission matrix (grouped in Users and Access): every meaningful nav page is individually controllable; only enforceable actions are shown (no fake checkboxes). Server enforcement is additive and FAIL CLOSED, scoped to role=Custom: column-free RLS on every mapped table (view/create/edit/delete), status-transition RLS for invoice/return/collection/cheque confirm+reverse, OWN scope on parents AND child tables (invoice_lines/return_lines/settlement allocations via parent), and permission gates added to create/reverse settlement, stock-transfer POST and product/variant delete + eligibility (verbatim migration-13/11/12/14 bodies + one guard OR-branch, accounting byte-for-behavior). Settlements/Audit now honor the matrix for Custom users; generic canEdit() is section-specific (no cross-section bleed); Users and Access stays Administrator-only (not grantable). Legacy users keep EXACT role-based access; on first edit their TRUE effective access (role ∩ user_section_access) is preloaded and only converts to Custom on Save. Administrators are protected (never demoted/reset via this path; last admin preserved). Passwords: server-side createUser with confirmed email (min 8, confirmed), admin-only reset via updateUserById, existing-email create returns 409, never stored/returned/logged/audited. Migrations 01-14 untouched; no accounting/FIFO/inventory/settlement/commission math changed.';
+const APP_VERSION='3.26.0-WIP', APP_BUILD='v3.26.0-WIP (rev23.3) — VOICE INVOICE TIMEOUT-CONTRACT FIX: the client → Edge abort timer is raised from 45s to 75s so it can no longer fire BEFORE the Edge finishes its documented worst-case pipeline (30s transcription + 30s extraction + ~2s auth ≈ 62s) — a valid slow request is no longer aborted by the browser prematurely; Cancel/modal-close still abort immediately, and timeout/error still leaves the draft untouched with a late-response guard. (Deploy config: voice-invoice verify_jwt=true — gateway JWT verification restored as defense-in-depth; the browser CORS OPTIONS preflight is allowed through by the Supabase runtime, and handler auth+role authorization remain mandatory.) — was rev23.2: VOICE INVOICE APPLY-ATOMICITY FIX: voiceApply now preflight-validates EVERY non-skipped reviewed item (variant resolves + still selectable, qty>=1, unit price>0 — same minimums as manual entry) and BUILDS all lines before any mutation; if one fails, nothing is added, no replace, the draft AND review are preserved, the row is flagged, Apply stays blocked, no success toast — a resolved item can no longer be silently dropped. — was rev23.1: VOICE INVOICE HARDENING (confidence-aware safe matching; no silent line drop — resolve or Remove; server-side feature authorization in the Edge Function; robust recording cleanup/abort/timeout with a stale-response guard). — was rev23: VOICE INVOICE (Voice → Preliminary Invoice): a 🎙️ Voice Invoice action inside Create Preliminary Invoice lets a salesperson dictate items (Egyptian/Modern Arabic, English, mixed); a server-side voice-invoice Edge Function transcribes + extracts a STRUCTURED, NON-authoritative draft (no AI key in client), the client resolves every item against the REAL active catalog (never invents products/prices), shows a Review panel (transcript + matched/ambiguous/not-found), and on Apply injects lines through the EXACT manual _pd.lines path (same pricing/validation/permissions/save) — never auto-submits, never bypasses price/permission rules, preserves the existing draft, and degrades gracefully offline. No DB change; migrations 01–16 and admin-users untouched. — was rev22.1: CUSTOMER OVERPAYMENT / UNAPPLIED CREDIT / AUTOMATIC FIFO CREDIT (Migration 16, additive on immutable 01–15). REV22.1 closeout: prior-credit→future-invoice commission now resolves the effective-dated rule at the INVOICE date (0 days), not the original prepayment date; server safe-delete (explicit WHERE) restored; server↔client FIFO parity (invoices→opening debit→charges); cs_customer_credit is internal-only (no scope leak); ledger RLS authorizes against the CURRENT customer owner (survives reassignment); customer_charges/opening_balances triggers + backfill; audit only real before→after credit transitions (no duplicates on idempotent recompute). A collection or Credit settlement MAY now exceed the open debt: the full amount is saved and the excess becomes authoritative, server-side Customer Unapplied Credit (new tables customer_unapplied_credits + customer_credit_applications, write-protected by a rep_priv() guard, maintained ONLY by the deterministic engine cs_recompute_customer_credit via AFTER triggers on invoices/collections/cheques/return_invoices/customer_settlements — so every write path is covered and none can overpay while another rejects). Credit auto-applies FIFO (oldest source first) to invoices the customer receives afterward, at the INVOICE date (0 collection days; existing commission rules unchanged). create_customer_settlement no longer rejects credit>debt; cs_reallocate_customer no longer raises on a credit remainder; cs_customer_debt is byte-unchanged (credit = max(0,-debt), now itemized). Invoice cancel / collection void / settlement reverse atomically replay the FIFO chain (no silent orphan). Concurrency-safe (per-customer advisory lock, no double-consume), retry-idempotent, one atomic migration, no silent SQL swallow. Client: overpayment saves (caps removed on Record Collection + Customer Settlement Credit), customer credit shown as a positive "Customer Unapplied Credit" (Customers List, Profile, Account Statement with source→invoice itemization, AR/Aging with Gross AR / Customer Credit Balances / Net AR) — never a negative Outstanding. — was rev21.5: CUSTOM USER PERMISSIONS · MFG PERSISTENCE HOTFIX. Manufacturing Settings save path: the mfg_settings_get/save RPCs now allow only Administrator + Finance Manager among legacy roles (Accountant and AR Accountant are rejected — no broadening); and securePushSettings routes a Custom user by exact permission — the broad app_settings (general-settings) write runs only with settings:edit, mfg_settings_save runs only with mfgsettings:edit (exactly once), a mfgsettings:edit-only user never attempts the broad write so no false "Cloud save failed" appears on a successful MFG save, while a real mfg_settings_save failure still surfaces; legacy save chain preserved. — was rev21.4: (1) Manufacturing Settings: a Custom mfgsettings:view user sees the page but ZERO mutation controls (Add/Edit/Enable/Disable hidden, tolerance/config inputs disabled) with defense-in-depth canAction(mfgsettings,edit) on openMfgCfgForm/saveMfgCfgForm/mfgCfgToggle/mfgCfgSetting; mfgsettings:edit persists via a narrow SECURITY DEFINER RPC (mfg_settings_save) that writes ONLY the mfgSettings key of app_settings — no general settings:edit needed, no unrelated settings exposed — and a failed secure write now surfaces (no silent swallow). (2) Expense Dashboard/Reports read the underlying data (expenses/expense_payments/expense_categories) when the user has expenses:view OR expensedash:view OR expensereports:view, while the Expenses NAV page still requires expenses:view; no create/edit is granted and direct writes stay rejected. — was rev21.3: Custom users now get FUNCTIONAL (not just visible) capabilities: the Expenses and Phase-H/BOM permission wrappers have exact Custom branches (create≠edit; approve/pay/reverse and production-ops stay ungranted; the old viewManufacturing→OPS fallback no longer escalates a fabricorders:view into manageBOM). Category/recurring/BOM create vs edit vs activate are gated by exact canAction() at each button. Sales Workspace (Preliminary Invoices / Rep Collections / My Funds) is READ-ONLY for Custom and now data-scoped (own|all) with server-enforced salesperson ownership RLS on preliminary_invoices(+lines via parent), rep_collection_submissions, rep_spending and rep_fund_movements (own requires a linked salesperson; no cross-salesperson REST leak). Edge create proves orphan ownership via a SERVER-CONTROLLED app_metadata marker (texcredit_provision_request=request_key) — a profile-less unrelated Auth user is never adopted. Migration 15 (revised in place as 15_user_custom_permissions_4) has NO silent SQL swallow and stays ONE atomic transaction. — was rev21.2: Full final-nav coverage (every nav id maps to a matrix section, is Admin-only, or is a utility — machine-tested); a FINAL navAllowed wrapper makes the per-user matrix the sole authority for Custom users so no role-based module nav wrapper (Expenses/Phase-F/Phase-H/AR/Sales-Rep/section-access) can override matrix granularity — each operational page resolves from its OWN section. Create is NOT edit: canAction(section,action) checks the EXACT action; canEdit() for Custom means edit only; Add vs Edit entry points for Customers/Purchase-Invoices/Cheques use the exact create/edit action. Export is real: exportBtn()/doExport() enforce section:export for Custom via an authoritative provider→section map (hidden button + refused direct call). New matrix sections: Expenses, Advanced Inventory, Phase-H Manufacturing, Sales Workspace. Server (revised additive migration 15 [15_user_custom_permissions_3], ONE atomic transaction on immutable 01-14): own-scope enforced INSIDE the settlement definer RPCs; confirm/reverse guard triggers so a confirm/reverse-only user cannot mutate financial fields; long-tail policy failures on existing tables abort (no silent skip) + postconditions; real expense/BOM tables mapped and RLS-gated. Edge Function create is idempotent/resumable (provisioning state) — same request_key resumes, no duplicate Auth user, changed payload → 409. NO production SQL, NO deployment (review build; revised additive migration 15 [15_user_custom_permissions_2] on immutable 01-14; admin-users Edge Function hardened; NO production SQL, NO deployment). Granular per-page permission matrix (grouped in Users and Access): every meaningful nav page is individually controllable; only enforceable actions are shown (no fake checkboxes). Server enforcement is additive and FAIL CLOSED, scoped to role=Custom: column-free RLS on every mapped table (view/create/edit/delete), status-transition RLS for invoice/return/collection/cheque confirm+reverse, OWN scope on parents AND child tables (invoice_lines/return_lines/settlement allocations via parent), and permission gates added to create/reverse settlement, stock-transfer POST and product/variant delete + eligibility (verbatim migration-13/11/12/14 bodies + one guard OR-branch, accounting byte-for-behavior). Settlements/Audit now honor the matrix for Custom users; generic canEdit() is section-specific (no cross-section bleed); Users and Access stays Administrator-only (not grantable). Legacy users keep EXACT role-based access; on first edit their TRUE effective access (role ∩ user_section_access) is preloaded and only converts to Custom on Save. Administrators are protected (never demoted/reset via this path; last admin preserved). Passwords: server-side createUser with confirmed email (min 8, confirmed), admin-only reset via updateUserById, existing-email create returns 409, never stored/returned/logged/audited. Migrations 01-14 untouched; no accounting/FIFO/inventory/settlement/commission math changed.';
 /*==================================================================================
   TEXTILE CREDIT & COLLECTIONS ERP  —  single-file interactive prototype
   Shared data model + FIFO replay engine. All views derive from one dataset.
@@ -26386,8 +26386,10 @@ function openPrelimForm(id){
         <div class="form-row" style="width:110px;margin:0"><label>${E(T('Unit Price'))}</label><input type="number" id="pl_price" min="0" step="0.01"></div>
         <div class="form-row" id="pl_disccell" style="min-width:180px;margin:0"></div>
         <button class="btn sm" id="pl_add">+ ${E(T('Add line'))}</button>
+        <button class="btn sm" id="pl_voice_btn" title="${E(T('Dictate the invoice'))}" style="background:#eef5fc;border-color:#cfe0f5">&#127908; ${E(T('Voice Invoice'))}</button>
       </div>
       <div id="pl_stockhint" class="muted" style="font-size:11.5px;min-height:16px"></div>
+      <div id="pl_voice"></div>
       <div id="pl_lines"></div>
       ${allowDisc?`<div class="card" style="margin-top:10px;border-color:#f0dca6"><div class="card-h"><h3>&#127991; ${E(T('Additional Invoice Discount'))}</h3><span class="sub">${E(T('An invoice-level extra discount added on top of the active commercial base (additive points). Does not affect No-Discount lines.'))}</span></div><div class="card-b"><div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
         <div class="form-row" style="width:120px;margin:0"><label>${E(T('Additional Invoice Discount %'))}</label><input type="number" id="pl_extra" min="0" max="100" step="0.01" value="${_pd.extraPct||0}"></div>
@@ -26411,6 +26413,7 @@ function openPrelimForm(id){
     if(dt==='Custom'){ if(repSettings().discount==='Allow'){ customPct=+((b('pl_custpct')||{}).value)||0; } else { customPct=''; } }
     _pd.lines.push({productId:v.productId,variantId:v.id,sku:v.sku||'',color:v.color||'',size:v.size||'',qty,unitPrice:price,discountType:dt,customPct});
     b('pl_var').value='';b('pl_qty').value='1';b('pl_price').value='';b('pl_disccell').innerHTML='';b('pl_stockhint').innerHTML=''; renderPrelimLines(); };
+  { const vb=b('pl_voice_btn'); if(vb){ const okv=voiceSupported()&&voiceOnline(); vb.disabled=!okv; if(!okv){ vb.title=voiceOnline()?T('Voice recording is not supported on this device'):T('Voice Invoice requires internet connection'); } vb.onclick=()=>voiceStart(); } }
   if(allowDisc){ b('pl_extra').oninput=e=>{_pd.extraPct=Math.max(0,+e.target.value||0); renderPrelimLines();}; b('pl_excreason').onchange=e=>{_pd.exceptionReason=e.target.value;}; b('pl_excnote').oninput=e=>{_pd.exceptionNote=e.target.value;}; }
   b('pl_draft').onclick=()=>prelimSave(false);
   b('pl_submit').onclick=()=>prelimSave(true);
@@ -26925,13 +26928,258 @@ if(typeof I18N!=='undefined'&&I18N.ar){Object.assign(I18N.ar,{
 // Safety: if an approver CANCELS the posting/conversion modal, drop the pending link so a later, unrelated
 // save can never inherit a stale link. (On a SUCCESSFUL save the link is consumed by the success hook BEFORE
 // closeModal runs, so this reset is a no-op there.)
-if(typeof closeModal==='function'){ const _srOrigCloseModal=closeModal; closeModal=function(){ try{ if(window.SR){SR._awaitPost=null;SR._awaitConvert=null;} }catch(e){} return _srOrigCloseModal.apply(this,arguments); }; }
+if(typeof closeModal==='function'){ const _srOrigCloseModal=closeModal; closeModal=function(){ try{ if(window.SR){SR._awaitPost=null;SR._awaitConvert=null;} }catch(e){} try{ if(typeof voiceReset==='function')voiceReset(); }catch(e){} return _srOrigCloseModal.apply(this,arguments); }; }
+/* ═══════════════ REV23.1 — VOICE INVOICE (Voice → Preliminary Invoice) · hardened ═══════════════
+ * An alternative DATA-ENTRY method for the EXISTING preliminary-invoice draft. It ONLY populates _pd.lines through
+ * the SAME shape the manual "Add line" button uses, then calls renderPrelimLines(). It never creates a second
+ * invoice/pricing/builder engine, never submits/sends, never invents products/prices, and inherits the exact
+ * permission + read-only gates of manual entry. The AI provider runs SERVER-SIDE (voice-invoice Edge Function);
+ * no AI key is ever in this client. The AI result is NON-authoritative; every item is resolved against the real
+ * active catalog. Transcript/product text is untrusted and HTML-escaped. REV23.1 hardening: confidence-aware safe
+ * matching (blocker 1), no silent line drop — resolve or explicitly Remove (blocker 2), and one robust
+ * cleanup/abort/timeout path with a generation guard against stale responses (blocker 4). */
+let _voice={ rec:null, chunks:[], stream:null, t0:0, timer:null, review:null, gen:0, abort:null };
+function voiceSupported(){ try{ return !!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&typeof MediaRecorder!=='undefined'); }catch(e){ return false; } }
+function voiceOnline(){ return !(typeof navigator!=='undefined'&&navigator.onLine===false); }
+function voicePanel(){ return document.getElementById('pl_voice'); }
+// ONE robust cleanup/abort path (blocker 4): bump the generation so any late response is ignored, abort in-flight
+// fetch, detach onstop, stop the recorder + every mic track, clear the timer, wipe the panel and stale review state.
+function voiceReset(){
+  _voice.gen++;
+  try{ if(_voice.abort){ _voice.abort.abort(); } }catch(e){}
+  try{ if(_voice.timer)clearInterval(_voice.timer); }catch(e){}
+  try{ if(_voice.rec){ _voice.rec.onstop=null; if(_voice.rec.state&&_voice.rec.state!=='inactive')_voice.rec.stop(); } }catch(e){}
+  try{ if(_voice.stream)_voice.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  _voice.rec=null;_voice.chunks=[];_voice.stream=null;_voice.timer=null;_voice.review=null;_voice.abort=null;
+  const p=voicePanel(); if(p)p.innerHTML='';
+}
+// ── normalization + bilingual aliases (do not assume an English-only catalog) ──
+function vnorm(s){ let x=String(s==null?'':s).toLowerCase(); try{ x=x.normalize('NFKD').replace(/[ؐ-ًؚ-ْٰ]/g,''); }catch(e){} return x.replace(/[\s\-_/.]+/g,' ').trim(); }
+const _VSIZE={s:'s',small:'s','سمول':'s','صغير':'s',m:'m',medium:'m','ميديم':'m','وسط':'m',l:'l',large:'l','لارج':'l','كبير':'l',xl:'xl','اكس لارج':'xl','extra large':'xl',xxl:'xxl','2xl':'xxl','تو اكس':'xxl'};
+const _VCOLOR={black:'black','اسود':'black','أسود':'black','بلاك':'black',white:'white','ابيض':'white','أبيض':'white',grey:'grey',gray:'grey','رمادي':'grey',navy:'navy','كحلي':'navy',blue:'blue','ازرق':'blue','أزرق':'blue',green:'green','اخضر':'green','أخضر':'green',red:'red','احمر':'red','أحمر':'red'};
+const _VALIAS={ tshirt:['tee','t shirt','تيشيرت','تيشرت'], tee:['tshirt','t shirt','تيشيرت'], shirt:['tshirt','tee','قميص','تيشيرت'],
+  'تيشيرت':['tshirt','tee','t shirt','shirt'], 'تيشرت':['tshirt','tee','t shirt','shirt'], pants:['trousers','بنطلون'], trousers:['pants','بنطلون'],
+  'بنطلون':['pants','trousers'], polo:['بولو'], 'بولو':['polo'], jacket:['جاكيت','جاكت'], 'جاكيت':['jacket'], 'قميص':['shirt'] };
+function vsize(s){ const n=vnorm(s); return _VSIZE[n]||n; }
+function vcolor(s){ const n=vnorm(s); return _VCOLOR[n]||n; }
+function _vhit(tok,ptext){ if(!tok)return false; if(ptext.includes(tok))return true; const a=_VALIAS[tok]; return !!(a&&a.some(x=>ptext.includes(vnorm(x)))); }
+// ── SAFE, confidence-aware match of ONE parsed item against active/selectable catalog variants (blocker 1) ──
+const _VCONF_MIN=0.6;
+function voiceMatchItem(item){
+  const conf=(item&&isFinite(+item.confidence))?Math.max(0,Math.min(1,+item.confidence)):0.5;   // preserve AI confidence
+  const rawQ=vnorm(item&&item.productQuery), spoken=vnorm(item&&item.spokenText);
+  const cq=vcolor(item&&item.colorQuery), sq=vsize(item&&item.sizeQuery);
+  const qty=Math.max(1,Math.round(+((item&&item.quantity))||1));
+  const spokenPrice=(item&&item.spokenUnitPrice!=null&&isFinite(+item.spokenUnitPrice)&&+item.spokenUnitPrice>0)?+item.spokenUnitPrice:null;
+  const enTok=rawQ.split(' ').filter(t=>t.length>1);
+  const nounTok=spoken.split(' ').filter(t=> t.length>=3 && !/^\d+$/.test(t) && !_VSIZE[t] && !_VCOLOR[t]);   // spoken product-noun tokens (colours/sizes/digits excluded)
+  const scored=(DB.productVariants||[]).filter(variantSelectableForNew).map(v=>{
+    const p=productById(v.productId)||{};
+    const ptext=vnorm([p.name,p.code,p.brand,p.category,p.description,v.sku].join(' '));   // p.name may itself be Arabic
+    const skuN=vnorm(v.sku);
+    const exactSku=!!skuN && (skuN===rawQ || spoken.split(' ').indexOf(skuN)>=0 || (rawQ && rawQ.split(' ').indexOf(skuN)>=0));
+    const enHit=enTok.length ? enTok.filter(t=>_vhit(t,ptext)).length/enTok.length : 0;      // English/normalized query ratio
+    const arHit=nounTok.length ? nounTok.filter(t=>_vhit(t,ptext)).length/nounTok.length : 0; // spoken (e.g. Arabic) noun ratio
+    const phit=exactSku?1:Math.max(enHit,arHit);
+    const vc=vcolor(v.color), vs=vsize(v.size);
+    const colorOk=!cq || vc===cq || vc.includes(cq) || cq.includes(vc);
+    const sizeOk =!sq || vs===sq;
+    const colorExact=!cq || vc===cq, sizeExact=!sq || vs===sq;
+    const score=phit*0.6 + (cq?(vc===cq?0.25:(colorOk?0.10:0)):0.12) + (sq?(vs===sq?0.15:0):0.08);
+    return {v,phit,exactSku,colorOk,sizeOk,colorExact,sizeExact,score};
+  }).filter(x=> (x.phit>0 || x.exactSku) && x.colorOk && x.sizeOk).sort((a,b)=> (b.exactSku-a.exactSku) || (b.score-a.score));
+  const cand=scored.map(x=>({variantId:x.v.id,label:variantLabel(x.v),sku:x.v.sku||'',price:(x.v.price!=null?+x.v.price:0)}));
+  let status,chosen=null,reason='';
+  const exact=scored.find(x=>x.exactSku);
+  if(exact){ status='matched'; chosen=exact.v.id; reason='exact SKU'; }              // exact SKU = authoritative catalog match
+  else if(cand.length===0){ status='unmatched'; }
+  else if(cand.length===1){
+    const top=scored[0];
+    const strong = top.phit>=0.999 && top.colorExact && top.sizeExact;              // full deterministic similarity
+    if(strong && conf>=_VCONF_MIN){ status='matched'; chosen=top.v.id; reason='strong+confident'; }
+    else { status='ambiguous'; reason=(!strong?'weak match':'low confidence'); }    // NEVER auto-select a weak/low-confidence single candidate
+  } else { status='ambiguous'; reason='multiple candidates'; }
+  const chosenPrice=(chosen!=null)?((variantById(chosen)||{}).price||0):0;
+  return { spokenText:String((item&&item.spokenText)||''), status, chosenVariantId:chosen, candidates:cand.slice(0,6),
+           qty, price:(+chosenPrice||0), spokenUnitPrice:spokenPrice, confidence:conf, reason, skipped:false };
+}
+// entry point after the AI returns a structured object (also the TEST seam for the structured pipeline)
+function voiceHandleStructured(structured){
+  const s=structured||{};
+  if(!s || !Array.isArray(s.items)){ toast(T('Voice Invoice could not understand the recording'),T('Please try again or add lines manually.'),'warn'); voiceReset(); return; }
+  const items=s.items.slice(0,40).map(voiceMatchItem);
+  _voice.review={ transcript:String(s.transcript||''), note:String(s.invoiceNote||''), customerSuggestion:(s.customerSuggestion==null?null:String(s.customerSuggestion)), items };
+  voiceRenderReview();
+}
+// REV23.2 (blocker 1) — Apply-time validity of ONE non-skipped item, using the SAME minimums as manual Preliminary
+// Invoice entry. Returns null when OK, else a human reason. This is what makes Apply atomic and drop-proof.
+function voiceItemInvalidReason(it){
+  if(!it || it.skipped) return null;
+  if(it.chosenVariantId==null) return T('needs a product choice');
+  const v=variantById(it.chosenVariantId);
+  if(!v) return T('selected product no longer exists');
+  if(typeof variantSelectableForNew==='function' && !variantSelectableForNew(v)) return T('selected product is no longer available');
+  if(!(Math.round(+it.qty||0)>=1)) return T('quantity must be at least 1');
+  const price=(+it.price>0)?+it.price:(v.price!=null?+v.price:0);
+  if(!(price>0)) return T('unit price is required (> 0)');
+  return null;
+}
+// "unresolved" now means ANY non-skipped item that would fail Apply — a null product choice OR an Apply-invalid row
+// (missing/unselectable variant, bad qty, non-positive price). Apply stays blocked until every such row is fixed or Removed.
+function voiceUnresolvedCount(){ const R=_voice.review; if(!R)return 0; return R.items.filter(it=>!it.skipped && voiceItemInvalidReason(it)!=null).length; }
+function voiceRefreshApplyState(){ const ab=document.getElementById('vi_apply'); if(ab)ab.disabled=voiceUnresolvedCount()>0; }
+function voiceRenderReview(){
+  const p=voicePanel(); if(!p||!_voice.review)return; const R=_voice.review;
+  const badge=(it)=> it.skipped?`<span class="badge b-gray">${E(T('Removed'))}</span>` : it.status==='matched'?`<span class="badge b-green">${E(T('Matched'))} &#10003;</span>` : it.status==='ambiguous'?`<span class="badge b-amber">${E(T('Needs Review'))} &#9888;</span>` : `<span class="badge b-red">${E(T('Not found'))}</span>`;
+  const rows=R.items.map((it,i)=>{
+    if(it.skipped){ return `<tr style="opacity:.5"><td>${badge(it)}<div style="font-size:11px" class="muted">&#8220;${E(it.spokenText)}&#8221;</div></td><td colspan="2" class="muted">${E(T('Skipped — will not be added'))}</td><td><button class="btn sm" onclick="SR.voiceSkipItem(${i})">${E(T('Undo'))}</button></td></tr>`; }
+    let picker;
+    if(it.status==='unmatched'){ picker=`<div class="muted" style="font-size:11.5px;color:var(--red)">${E(T('الصنف غير موجود أو غير واضح — not found or unclear'))}</div>`; }
+    else { const opts=it.candidates.map(c=>`<option value="${c.variantId}" ${it.chosenVariantId===c.variantId?'selected':''}>${E(c.label)}${c.sku?(' · '+E(c.sku)):''}</option>`).join('');
+      picker=`<select data-vi="${i}" class="vi-pick" style="max-width:280px">${it.chosenVariantId==null?`<option value="">${E(T('Choose a product…'))}</option>`:''}${opts}</select>`; }
+    const priceWarn=(it.spokenUnitPrice!=null)?`<div class="muted" style="font-size:11px;color:var(--amber-d,#8a5a00)">&#9888; ${E(T('heard price'))} ${E(String(it.spokenUnitPrice))} — ${E(T('set it manually only if your role permits; catalog price is used by default'))}</div>`:'';
+    const reason=voiceItemInvalidReason(it);
+    const reasonHtml=reason?`<div style="font-size:11px;color:var(--red)">&#9888; ${E(reason)}</div>`:'';
+    return `<tr${reason?' style="background:var(--red-bg,#fdeaea)"':''}>
+      <td>${badge(it)}<div style="font-size:11px" class="muted">&#8220;${E(it.spokenText)}&#8221;</div></td>
+      <td>${picker}${priceWarn}${reasonHtml}</td>
+      <td class="num"><input type="number" min="1" value="${it.qty}" data-viq="${i}" style="width:60px"></td>
+      <td class="num" style="white-space:nowrap"><input type="number" min="0" step="0.01" value="${it.price||''}" data-vip="${i}" style="width:82px" ${it.status==='unmatched'&&it.chosenVariantId==null?'disabled':''}> <button class="btn sm danger" title="${E(T('Remove this item'))}" onclick="SR.voiceSkipItem(${i})">&times;</button></td>
+    </tr>`;
+  }).join('');
+  const hasDraft=(_pd.lines&&_pd.lines.length>0);
+  const unresolved=voiceUnresolvedCount();
+  p.innerHTML=`<div class="card" style="margin-top:10px;border-color:#cfe0f5"><div class="card-h"><h3>&#127908; ${E(T('Voice Invoice — Review'))}</h3><span class="sub">${E(T('Review before applying. Nothing is added until you press Apply.'))}</span></div>
+    <div class="card-b">
+      <div class="section-note" style="font-size:11.5px;background:#f6f9fe;border-color:#cfe0f5"><b>${E(T('What we heard'))} / ${E(T('الكلام اللي اتسمع'))}:</b><br>${E(R.transcript||'—')}</div>
+      ${R.customerSuggestion?`<div class="muted" style="font-size:11.5px;margin-top:6px">${E(T('Customer mentioned'))}: <b>${E(R.customerSuggestion)}</b> — ${E(T('the selected customer is NOT changed automatically.'))}</div>`:''}
+      <div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr><th>${E(T('Status'))}</th><th>${E(T('Product / Variant'))}</th><th class="num">${E(T('Qty'))}</th><th class="num">${E(T('Unit Price'))}</th></tr></thead><tbody>${rows||`<tr><td colspan="4"><div class="empty" style="padding:10px"><b>${E(T('No items understood'))}</b></div></td></tr>`}</tbody></table></div>
+      ${R.note?`<div class="muted" style="font-size:11.5px;margin-top:6px">${E(T('Note'))}: ${E(R.note)} — ${E(T('appended to the invoice note on Apply.'))}</div>`:''}
+      ${unresolved>0?`<div class="section-note" style="margin-top:8px;font-size:11.5px;border-color:#f3c7c7;background:var(--red-bg,#fdeaea);color:var(--red)">&#9888; ${E(unresolved+' '+T('item(s) need a fix (product / quantity / unit price) or Remove before you can Apply — no item is silently dropped.'))}</div>`:''}
+      ${hasDraft?`<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px"><input type="checkbox" id="vi_replace"> ${E(T('Replace the existing draft lines (otherwise voice lines are ADDED to them)'))}</label>`:''}
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn primary" id="vi_apply" ${unresolved>0?'disabled':''}>${E(T('Apply to Invoice'))}</button>
+        <button class="btn" id="vi_again">&#127908; ${E(T('Record Again'))}</button>
+        <button class="btn" id="vi_cancel">${E(T('Cancel'))}</button>
+      </div>
+    </div></div>`;
+  p.querySelectorAll('.vi-pick').forEach(sel=>{ sel.onchange=e=>{ const i=+e.target.getAttribute('data-vi'); const vid=+e.target.value||null; R.items[i].chosenVariantId=vid; const pv=(variantById(vid)||{}).price; const pin=p.querySelector('[data-vip="'+i+'"]'); if(pin&&(!pin.value||+pin.value===0)&&pv!=null){ pin.value=pv; R.items[i].price=+pv; } voiceRenderReview(); }; });
+  p.querySelectorAll('[data-viq]').forEach(inp=>{ inp.oninput=e=>{ const i=+e.target.getAttribute('data-viq'); R.items[i].qty=Math.max(1,Math.round(+e.target.value||1)); R.items[i].applyError=null; voiceRefreshApplyState(); }; });
+  p.querySelectorAll('[data-vip]').forEach(inp=>{ inp.oninput=e=>{ const i=+e.target.getAttribute('data-vip'); R.items[i].price=Math.max(0,+e.target.value||0); R.items[i].applyError=null; voiceRefreshApplyState(); }; });
+  const ab=document.getElementById('vi_apply'); if(ab)ab.onclick=()=>voiceApply(!!(document.getElementById('vi_replace')&&document.getElementById('vi_replace').checked));
+  const rb=document.getElementById('vi_again'); if(rb)rb.onclick=voiceStart;
+  const cb=document.getElementById('vi_cancel'); if(cb)cb.onclick=voiceReset;
+}
+// explicit per-row Remove/Skip (blocker 2): an item ends as resolved OR explicitly removed — never silently dropped
+function voiceSkipItem(i){ const R=_voice.review; if(!R||!R.items[i])return; R.items[i].skipped=!R.items[i].skipped; if(R.items[i].skipped)R.items[i].chosenVariantId=R.items[i].chosenVariantId; voiceRenderReview(); }
+// Apply reviewed items to _pd.lines via the EXACT manual line shape, then re-render. NEVER submits. BLOCKS if any item is unresolved.
+// REV23.2 (blocker 1) — ATOMIC apply. Every non-skipped item is preflight-validated and its line BUILT before ANY
+// mutation. If a single non-skipped item fails, NOTHING is added, NO replace happens, the draft AND the review are
+// preserved, the failed row(s) are flagged, Apply stays blocked, there is NO voiceReset() and NO success toast.
+// Only when ALL non-skipped items pass does the draft mutate — all of them, or none. A non-skipped item can therefore
+// NEVER be silently dropped: it is either applied or explicitly Removed by the user.
+function voiceApply(replace){
+  if(srRoBlock())return;
+  const R=_voice.review; if(!R)return;
+  const active=R.items.filter(it=>!it.skipped);
+  if(!active.length){ toast(T('Nothing to apply'),T('All items were removed — record again or add lines manually.'),'warn'); return; }
+  const built=[]; let failed=0;
+  active.forEach(it=>{
+    const reason=voiceItemInvalidReason(it); it.applyError=reason||null;
+    if(reason){ failed++; return; }
+    const v=variantById(it.chosenVariantId); const qty=Math.max(1,Math.round(+it.qty||1));
+    const price=(+it.price>0)?+it.price:(v.price!=null?+v.price:0);
+    built.push({ productId:v.productId, variantId:v.id, sku:v.sku||'', color:v.color||'', size:v.size||'',
+                 qty, unitPrice:price, discountType:discountTypeOf(v.productId), customPct:'' });   // customPct blank: a Custom discount still needs the normal authorized manual decision
+  });
+  if(failed){                                          // FAIL CLOSED — preserve draft + review, flag rows, stay blocked
+    voiceRenderReview();
+    toast(T('Cannot apply yet'), failed+' '+T('item(s) need a fix or Remove — nothing was added and your draft is unchanged.'),'warn');
+    return;
+  }
+  if(replace) _pd.lines=[];                            // only reached when EVERY non-skipped item is valid
+  built.forEach(l=>_pd.lines.push(l));
+  if(R.note){ const cur=(_pd.notes||'').trim(); _pd.notes=(cur?cur+' · ':'')+R.note; const nb=document.getElementById('pl_notes'); if(nb)nb.value=_pd.notes; }
+  const added=built.length;                            // always >= 1 here
+  voiceReset();
+  renderPrelimLines();
+  toast(T('Voice lines added'), added+' '+T('line(s) added to the draft — review, then Save/Submit manually.'), 'ok');
+}
+// ── recording + server call (voice-invoice Edge Function) — AI provider is server-side; NO key in this client ──
+async function voiceStart(){
+  if(srRoBlock())return;                                    // same read-only gate as manual entry
+  voiceReset();                                             // abort/clean any prior session first
+  if(!voiceOnline()){ toast(T('Voice Invoice requires internet connection'),T('Manual line entry still works.'),'warn'); return; }
+  if(!voiceSupported()){ toast(T('Voice recording is not supported on this device'),T('Use manual line entry instead.'),'warn'); return; }
+  const p=voicePanel(); if(!p)return;
+  const myGen=_voice.gen;                                   // capture generation for the whole session
+  let stream; try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch(e){ toast(T('Microphone permission denied'),T('Enable the microphone to use Voice Invoice.'),'warn'); return; }
+  if(_voice.gen!==myGen){ try{ stream.getTracks().forEach(t=>t.stop()); }catch(e){} return; }   // cancelled while awaiting permission
+  _voice.stream=stream; _voice.chunks=[];
+  let mr; try{ mr=new MediaRecorder(stream); }catch(e){ toast(T('Voice recording is not supported on this device'),'','warn'); voiceReset(); return; }
+  _voice.rec=mr; mr.ondataavailable=e=>{ if(e.data&&e.data.size>0)_voice.chunks.push(e.data); }; mr.onstop=()=>voiceAfterStop(myGen);
+  try{ mr.start(); }catch(e){ toast(T('Voice recording failed to start'),'','warn'); voiceReset(); return; }
+  _voice.t0=Date.now();
+  p.innerHTML=`<div class="card" style="border-color:#f0c9c9;margin-top:10px"><div class="card-b" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <span style="font-size:20px;color:var(--red)">&#128308;</span><b>${E(T('Recording'))}…</b> <span id="pl_voice_timer" class="t-strong">0:00</span>
+    <span class="muted" style="font-size:11.5px;flex:1;min-width:180px">${E(T('Say items + quantities, e.g. "3 black t-shirt XL and 5 grey pants large".'))}</span>
+    <button class="btn sm primary" id="pl_voice_stop">&#9209; ${E(T('Stop'))}</button>
+    <button class="btn sm" id="pl_voice_cancel">${E(T('Cancel'))}</button></div></div>`;
+  document.getElementById('pl_voice_stop').onclick=voiceStopRec;
+  document.getElementById('pl_voice_cancel').onclick=voiceCancelRec;
+  _voice.timer=setInterval(()=>{ const el=document.getElementById('pl_voice_timer'); if(!el)return; const s=Math.floor((Date.now()-_voice.t0)/1000); el.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); if(s>=90)voiceStopRec(); },250);  // 90s client cap
+}
+function voiceStopRec(){ try{ if(_voice.timer){clearInterval(_voice.timer);_voice.timer=null;} }catch(e){} try{ if(_voice.rec&&_voice.rec.state&&_voice.rec.state!=='inactive')_voice.rec.stop(); else voiceAfterStop(_voice.gen); }catch(e){ voiceAfterStop(_voice.gen); } }
+function voiceCancelRec(){ voiceReset(); }   // Cancel during recording → no AI call (gen bumped, tracks stopped, onstop detached)
+async function voiceAfterStop(myGen){
+  if(myGen!==_voice.gen) return;                            // stale (cancelled/closed) — do nothing
+  try{ if(_voice.stream)_voice.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  const blob=new Blob(_voice.chunks||[],{type:(_voice.rec&&_voice.rec.mimeType)||'audio/webm'}); _voice.chunks=[];
+  if(!blob||!blob.size){ toast(T('No audio captured'),T('Nothing was recorded — try again.'),'warn'); voiceReset(); return; }
+  const p=voicePanel(); if(p)p.innerHTML=`<div class="card" style="margin-top:10px"><div class="card-b"><b>${E(T('Understanding the invoice'))}…</b> <span class="muted">&#8212; ${E(T('جاري فهم الفاتورة'))}</span></div></div>`;
+  let structured;
+  try{ structured=await voiceInvokeAI(blob,myGen); }
+  catch(e){ if(myGen!==_voice.gen)return; toast(T('Voice Invoice could not process the audio'),String((e&&e.message)||''),'err'); voiceReset(); return; }  // existing draft untouched
+  if(myGen!==_voice.gen) return;                            // a late response must NOT rebuild a closed/new draft
+  voiceHandleStructured(structured);
+}
+function voiceBlobB64(blob){ return new Promise((res,rej)=>{ try{ const fr=new FileReader(); fr.onerror=()=>rej(new Error('audio read failed')); fr.onload=()=>{ const s=String(fr.result||''); res(s.slice(s.indexOf(',')+1)); }; fr.readAsDataURL(blob); }catch(e){ rej(e); } }); }
+// rev23.3 TIMEOUT CONTRACT (client ↔ Edge). The Edge pipeline runs TWO sequential provider stages, each with its own
+// 30s server-side AbortController timeout: transcription (≤30s) THEN structured extraction (≤30s) = 60s worst-case
+// provider budget, preceded by two fast Supabase auth/authz calls (/auth/v1/user + /rest/v1/profiles, ~1–2s combined).
+// So the Edge's documented MAX processing budget is ≈62s. The client abort timer MUST be safely GREATER than that plus
+// network overhead (audio upload + JSON response), or a VALID slow request would be aborted by the browser before the
+// server could legitimately finish. 75s gives ≈13s margin over the 62s server budget. (Cancel / modal-close still abort
+// IMMEDIATELY via _voice.abort — this timer is only the upper bound for an otherwise-silent hang.)
+const VOICE_CLIENT_TIMEOUT_MS=75000;   // > Edge max budget (30s transcribe + 30s extract + ~2s auth) + network overhead
+async function voiceInvokeAI(blob,myGen){
+  if(typeof window!=='undefined' && typeof window.__voiceMockAI==='function'){ return await window.__voiceMockAI(blob); }  // TEST BOUNDARY ONLY (mocks the AI network call)
+  const c=(typeof getCloud==='function')?getCloud():null; if(!c)throw new Error(T('Cloud not configured'));
+  if(blob.size> 12*1024*1024) throw new Error(T('Recording too large — keep it under a minute.'));
+  const b64=await voiceBlobB64(blob);
+  const tok=(typeof SESSION!=='undefined'&&SESSION&&SESSION.token)?SESSION.token:c.key;   // the SIGNED-IN user's token
+  const ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+  if(ctl) _voice.abort=ctl;                                 // so voiceReset()/modal-close can abort an in-flight request
+  const to=ctl?setTimeout(()=>{ try{ctl.abort();}catch(e){} },VOICE_CLIENT_TIMEOUT_MS):null;   // client → Edge timeout (rev23.3: must exceed the Edge's max sequential provider budget)
+  let r;
+  try{
+    r=await fetch(`${c.url}/functions/v1/voice-invoice`,{method:'POST',headers:{'apikey':c.key,'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({audio:b64,mime:blob.type||'audio/webm'}),signal:ctl?ctl.signal:undefined});
+  }catch(e){ if(to)clearTimeout(to); if(e&&e.name==='AbortError') throw new Error(T('Voice Invoice timed out — please try again.')); throw e; }
+  finally{ if(to)clearTimeout(to); if(_voice.abort===ctl)_voice.abort=null; }
+  const j=await r.json().catch(()=>null);
+  if(!r.ok||!j||j.ok!==true) throw new Error((j&&j.error)||('HTTP '+r.status));
+  return j;
+}
+
 window.SR={ _awaitConvert:null, _awaitPost:null, _stockCache:{}, _meId:srMeId, _onInvoiceCreatedFromPrelim:onInvoiceCreatedFromPrelim, _onCanonicalPosted:onCanonicalPosted,
   repSettings, repSettingsSave, repCustody, addCustody,
   openPrelimForm, prelimDelLine, prelimSave, prelimSubmit, prelimCancel, prelimConvert, openPrelimPreview,
   openRepCollectForm, repCollSubmit, repCollApprove, repCollReject, repCollCancel,
   openRepSpendForm, repSpendSubmit, repSpendApprove, repSpendReject, repSpendCancel,
-  setSetting, toggleApprover, injectSettingsPanel, canConvertPrelim, canApproveRepColl, canApproveRepSpend, srIsApprover };
+  setSetting, toggleApprover, injectSettingsPanel, canConvertPrelim, canApproveRepColl, canApproveRepSpend, srIsApprover,
+  voiceStart, voiceStopRec, voiceCancelRec, voiceHandleStructured, voiceMatchItem, voiceApply, voiceRenderReview, voiceSupported, voiceOnline, voiceReset, voiceSkipItem, voiceUnresolvedCount, voiceItemInvalidReason,
+  get VOICE_CLIENT_TIMEOUT_MS(){ return VOICE_CLIENT_TIMEOUT_MS; } };
 })();
 /*═══════════════ END v3.25 SALES REPRESENTATIVE WORKSPACE MODULE ═══════════════*/
 
