@@ -12885,16 +12885,15 @@ function schedulePush(){ if(!cloudOn||suppressPush||secureMode())return; clearTi
 function anyOverlayOpen(){return document.getElementById('overlay').classList.contains('open')||document.getElementById('drawer').classList.contains('open')||!!document.getElementById('loginOverlay');}
 let _securePollBusy=false;
 let _lastSecurePollAt=0;
-const SECURE_POLL_MS=15*60*1000;          // 15 min: emergency egress-safe cadence for full snapshots
-const SECURE_FOCUS_MIN_MS=5*60*1000;      // returning to the tab may refresh, but never more often than every 5 min
+const SECURE_POLL_MS=15*60*1000;          // 15 min: egress-safe cadence for expensive full snapshots
 function startCloudPoll(){ if(pollStarted)return; pollStarted=true;
-  // EGRESS HOTFIX v2: full secure snapshots are expensive because several large tables are paged.
-  // Keep background sync conservative, pause when hidden, prevent overlaps, and throttle focus/visibility refreshes.
-  const runDataPoll=async(forceReason)=>{
+  // EGRESS HOTFIX v3: the initial secure load already gives us a fresh snapshot.
+  // Do NOT trigger another full snapshot merely because the window/devtools gets focus again.
+  _lastSecurePollAt=Date.now();
+  const runDataPoll=async()=>{
     if(document.hidden||!cloudOn||pushInFlight||_securePollBusy)return;
     const now=Date.now();
-    const minGap=(forceReason==='interval')?SECURE_POLL_MS:SECURE_FOCUS_MIN_MS;
-    if(_lastSecurePollAt && (now-_lastSecurePollAt)<minGap)return;
+    if(_lastSecurePollAt && (now-_lastSecurePollAt)<SECURE_POLL_MS)return;
     // rev23.25 — pause BOTH secure and legacy background pulls during a Customer Movement Import.
     // The import owns the local transaction arrays until its verified write loop ends.
     if(typeof _cmi!=='undefined'&&_cmi&&_cmi.importing)return;
@@ -12907,10 +12906,7 @@ function startCloudPoll(){ if(pollStarted)return; pollStarted=true;
       cloudPull(false);
     }
   };
-  setInterval(()=>runDataPoll('interval'),SECURE_POLL_MS);
-  // Refresh on return only if enough time has passed; switching to DevTools must not trigger repeated full snapshots.
-  document.addEventListener('visibilitychange',()=>{ if(!document.hidden)runDataPoll('focus'); });
-  window.addEventListener('focus',()=>{ runDataPoll('focus'); });
+  setInterval(runDataPoll,SECURE_POLL_MS);
   // JWT refresh runs on its own independent timer (unchanged), even while a modal/drawer is open
   setInterval(()=>{ if(authRequired()&&SESSION&&SESSION.refresh)ensureFreshToken(); },60000); }
 async function connectCloud(url,key,auth,secure){
