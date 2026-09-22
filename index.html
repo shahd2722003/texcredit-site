@@ -12884,16 +12884,30 @@ async function cloudPush(initial){
 }
 function schedulePush(){ if(!cloudOn||suppressPush||secureMode())return; clearTimeout(pushTimer); pushTimer=setTimeout(()=>cloudPush(false),700); }
 function anyOverlayOpen(){return document.getElementById('overlay').classList.contains('open')||document.getElementById('drawer').classList.contains('open')||!!document.getElementById('loginOverlay');}
+let _securePollBusy=false;
+let _lastSecurePollAt=0;
+const SECURE_POLL_MS=15*60*1000;          // 15 min: egress-safe cadence for expensive full snapshots
 function startCloudPoll(){ if(pollStarted)return; pollStarted=true;
-  // Background data poll: silent & change-aware (18s) — only re-renders when data actually changed
-  // and never while the user is interacting. This removes the periodic full-page flash.
-  setInterval(()=>{ if(!cloudOn||pushInFlight)return;
+  // EGRESS HOTFIX v3: the initial secure load already gives us a fresh snapshot.
+  // Do NOT trigger another full snapshot merely because the window/devtools gets focus again.
+  _lastSecurePollAt=Date.now();
+  const runDataPoll=async()=>{
+    if(document.hidden||!cloudOn||pushInFlight||_securePollBusy)return;
+    const now=Date.now();
+    if(_lastSecurePollAt && (now-_lastSecurePollAt)<SECURE_POLL_MS)return;
     // rev23.25 — pause BOTH secure and legacy background pulls during a Customer Movement Import.
     // The import owns the local transaction arrays until its verified write loop ends.
     if(typeof _cmi!=='undefined'&&_cmi&&_cmi.importing)return;
-    if(secureMode()){ if(SESSION)secureSyncTick().catch(()=>{}); }
-    else cloudPull(false);
-  },18000);
+    if(secureMode()){
+      if(!SESSION)return;
+      _securePollBusy=true;
+      _lastSecurePollAt=now;
+      try{await secureSyncTick();}catch(e){}finally{_securePollBusy=false;}
+    }else{
+      cloudPull(false);
+    }
+  };
+  setInterval(runDataPoll,SECURE_POLL_MS);
   // JWT refresh runs on its own independent timer (unchanged), even while a modal/drawer is open
   setInterval(()=>{ if(authRequired()&&SESSION&&SESSION.refresh)ensureFreshToken(); },60000); }
 async function connectCloud(url,key,auth,secure){
@@ -13242,18 +13256,38 @@ Object.assign(TMAP,{
 // so the old single `?select=*` silently hydrated only the first slice — some customers / Historical Invoices
 // loaded, others didn't. This pages through EVERY row (ordered by id for stability) and advances by the ACTUAL
 // number of rows returned, so it is correct whatever the server's max-rows is. Stops only when a page is empty.
-async function sbGet(table){
-  const c=getCloud(); const PAGE=1000; let offset=0; const all=[];
-  for(let guard=0; guard<1000000; guard++){
-    const r=await fetch(`${c.url}/rest/v1/${table}?select=*&order=id.asc&limit=${PAGE}&offset=${offset}`,{headers:dataHeaders()});
-    if(!r.ok)throw new Error(table+': HTTP '+r.status);
-    const rows=await r.json();
-    if(!Array.isArray(rows)){ return rows; }              // defensive: non-array (never expected for a table)
-    for(let i=0;i<rows.length;i++)all.push(rows[i]);
-    if(rows.length===0)break;                             // reached the end (an offset past the last row returns [])
-    offset+=rows.length;                                  // advance by rows actually returned → robust to any server cap
+const _sbReadCache=new Map();
+const _sbReadInflight=new Map();
+const _sbMissingTables=new Set();
+const SB_READ_CACHE_MS=60000;
+function sbInvalidate(table){ try{_sbReadCache.delete(table);_sbMissingTables.delete(table);}catch(e){} }
+async function sbGet(table,opts){
+  const fresh=!!(opts&&opts.fresh), now=Date.now();
+  if(!fresh){
+    if(_sbMissingTables.has(table))return [];              // a 404 table will stay missing for this page session
+    const hit=_sbReadCache.get(table);
+    if(hit&&(now-hit.at)<SB_READ_CACHE_MS)return hit.rows;
+    if(_sbReadInflight.has(table))return _sbReadInflight.get(table);
   }
-  return all;
+  const job=(async()=>{
+    const c=getCloud(); const PAGE=1000; let offset=0; const all=[];
+    for(let guard=0; guard<1000000; guard++){
+      const r=await fetch(`${c.url}/rest/v1/${table}?select=*&order=id.asc&limit=${PAGE}&offset=${offset}`,{headers:dataHeaders()});
+      if(!r.ok){
+        if(r.status===404){ _sbMissingTables.add(table); return []; }  // stop repeatedly probing optional tables that are not installed
+        throw new Error(table+': HTTP '+r.status);
+      }
+      const rows=await r.json();
+      if(!Array.isArray(rows)){ return rows; }              // defensive: non-array (never expected for a table)
+      for(let i=0;i<rows.length;i++)all.push(rows[i]);
+      if(rows.length===0)break;                             // reached the end (an offset past the last row returns [])
+      offset+=rows.length;                                  // advance by rows actually returned → robust to any server cap
+    }
+    _sbReadCache.set(table,{at:Date.now(),rows:all});
+    return all;
+  })();
+  if(!fresh)_sbReadInflight.set(table,job);
+  try{return await job;}finally{ if(_sbReadInflight.get(table)===job)_sbReadInflight.delete(table); }
 }
 // v3.26.1 (Scope D · correction) — the Inventory User has NO raw product_variants path (cost privacy). It reads the
 // catalog through the sanitized, field-complete definer RPC iw_catalog_variants() (cost NULL when View OFF), writes
@@ -13314,9 +13348,11 @@ function iwRefreshFailedModal(o){
 }
 async function sbUpsert(table,rows){const c=getCloud();const body=Array.isArray(rows)?rows:[rows];
   const r=await fetch(`${c.url}/rest/v1/${table}?on_conflict=id`,{method:'POST',headers:{...dataHeaders(),'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(body)});
-  if(!r.ok){const t=await r.text().catch(()=>'');throw new Error('HTTP '+r.status+(t?' — '+t:''));}}
+  if(!r.ok){const t=await r.text().catch(()=>'');throw new Error('HTTP '+r.status+(t?' — '+t:''));}
+  sbInvalidate(table);}
 async function sbDelete(table,id){const c=getCloud();const r=await fetch(`${c.url}/rest/v1/${table}?id=eq.${id}`,{method:'DELETE',headers:{...dataHeaders(),'Prefer':'return=minimal'}});
-  if(!r.ok)throw new Error('HTTP '+r.status);}
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  sbInvalidate(table);}
 // v3.4.3 — APPEND-ONLY cloud kinds. These tables are INSERT-only at the DB level (RLS grants insert/select
 // and REVOKES update/delete — e.g. audit_events). The generic merge-duplicates UPSERT compiles to
 // INSERT … ON CONFLICT DO UPDATE, which needs UPDATE privilege, so it fails with HTTP 403 / 42501
@@ -13340,7 +13376,7 @@ async function sbInsertAppendOnly(table,rows){
     let r;
     try{ r=await fetch(url,{method:'POST',headers:{...dataHeaders(),'Prefer':'resolution=ignore-duplicates,return=minimal'},body:JSON.stringify(body)}); }
     catch(netErr){ lastErr=netErr; await new Promise(res=>setTimeout(res,400*(attempt+1))); continue; }   // network drop → retry
-    if(r.ok||r.status===409)return;                                                                       // inserted, or already present → idempotent success
+    if(r.ok||r.status===409){ sbInvalidate(table); return; }                                              // inserted, or already present → idempotent success
     if(r.status<500){ const tx=await r.text().catch(()=>''); throw new Error('HTTP '+r.status+(tx?' — '+tx:'')); } // 4xx → surface, do not retry
     lastErr=new Error('HTTP '+r.status);                                                                  // 5xx → transient, retry
     await new Promise(res=>setTimeout(res,400*(attempt+1)));
@@ -13537,6 +13573,7 @@ async function secureLoad(){
   await loadMfgTables();
   await loadChequesTable();   // v3.3 cheques
   try{const sr=await fetch(`${c.url}/rest/v1/app_settings?id=eq.main&select=data`,{headers:dataHeaders()});const sj=await sr.json();
+    try{if(sr.ok&&Array.isArray(sj))_sbReadCache.set('app_settings',{at:Date.now(),rows:sj});}catch(_){}
     if(sj&&sj[0]&&sj[0].data){const d=sj[0].data;if(d.creditSettings)DB.creditSettings=d.creditSettings;if(d.bonusInterpolate!=null)DB.bonusInterpolate=d.bonusInterpolate;if(d.bonusRanges!=null)DB.bonusRanges=d.bonusRanges;if(d.roles)DB.roles=d.roles;if(d.commissionSettings)DB.commissionSettings=Object.assign({},d.commissionSettings);if(d.commissionApplied)DB.commissionApplied=d.commissionApplied;if(d.commissionAdjustments)DB.commissionAdjustments=d.commissionAdjustments;if(d.seqCommAdj!=null)DB.seqCommAdj=d.seqCommAdj;if(d.commissionRecalcRuns)DB.commissionRecalcRuns=d.commissionRecalcRuns;if(d.seqRecalcRun!=null)DB.seqRecalcRun=d.seqRecalcRun;if(d.commissionChangeRuns)DB.commissionChangeRuns=d.commissionChangeRuns;if(d.seqCommChangeRun!=null)DB.seqCommChangeRun=d.seqCommChangeRun;if(d.commissionRepairRuns)DB.commissionRepairRuns=d.commissionRepairRuns;if(d.seqCommRepairRun!=null)DB.seqCommRepairRun=d.seqCommRepairRun;if(d.returnReasons&&d.returnReasons.length)DB.returnReasons=d.returnReasons;
       if(d.customFieldDefs)DB.customFieldDefs=d.customFieldDefs;if(d.defectReasons&&d.defectReasons.length)DB.defectReasons=d.defectReasons;if(d.fabricStatuses&&d.fabricStatuses.length)DB.fabricStatuses=d.fabricStatuses;
       if(d.paymentMethods&&d.paymentMethods.length)DB.paymentMethods=d.paymentMethods;if(d.chequeStatuses&&d.chequeStatuses.length)DB.chequeStatuses=d.chequeStatuses;
@@ -13566,8 +13603,26 @@ async function secureLoad(){
   await loadHRTables();         // Phase D · HR (best-effort; missing tables before the migration never break load)
   // v3.1 Change 1 — load the posted-invoice edit audit trail (best-effort; a missing table never breaks load)
   try{const er=await fetch(`${c.url}/rest/v1/invoice_edits?select=*`,{headers:dataHeaders()});if(er.ok){const ej=await er.json();if(Array.isArray(ej))DB.invoiceEdits=ej.map(TMAP.invoice_edits.from);}}catch(e){}
-  // v3.4 — audit events (best-effort; a missing table never breaks load). Newest 2000 by time.
-  try{const ar=await fetch(`${c.url}/rest/v1/audit_events?select=*&order=at_ms.desc&limit=2000`,{headers:dataHeaders()});if(ar.ok){const aj=await ar.json();if(Array.isArray(aj)){DB.auditLog=aj.map(TMAP.audit_events.from);DB.seqAudit=DB.auditLog.reduce((m,e)=>Math.max(m,e.id||0),0);}}}catch(e){}
+  // v3.4 — audit events (best-effort; a missing table never breaks load).
+  // Egress hotfix: hydrate only the newest 200 events at startup, while fetching the current max id separately
+  // so new audit writes keep a correct monotonic sequence without downloading older audit payloads.
+  try{
+    const [ar,air]=await Promise.all([
+      fetch(`${c.url}/rest/v1/audit_events?select=*&order=at_ms.desc&limit=200`,{headers:dataHeaders()}),
+      fetch(`${c.url}/rest/v1/audit_events?select=id&order=id.desc&limit=1`,{headers:dataHeaders()})
+    ]);
+    if(ar.ok){
+      const aj=await ar.json();
+      if(Array.isArray(aj))DB.auditLog=aj.map(TMAP.audit_events.from);
+    }
+    if(air.ok){
+      const aij=await air.json();
+      if(Array.isArray(aij)&&aij[0]&&aij[0].id!=null)DB.seqAudit=+aij[0].id||0;
+      else DB.seqAudit=(DB.auditLog||[]).reduce((m,e)=>Math.max(m,e.id||0),0);
+    }else{
+      DB.seqAudit=(DB.auditLog||[]).reduce((m,e)=>Math.max(m,e.id||0),0);
+    }
+  }catch(e){DB.seqAudit=(DB.auditLog||[]).reduce((m,e)=>Math.max(m,e.id||0),0);}
   ensureWarehouses();
   applySeqCounters();
   autoClearDueCheques();   // v3.4: clear any cloud-loaded cheques whose due date has passed (idempotent)
