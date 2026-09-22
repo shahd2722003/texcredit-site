@@ -13602,8 +13602,26 @@ async function secureLoad(){
   await loadHRTables();         // Phase D · HR (best-effort; missing tables before the migration never break load)
   // v3.1 Change 1 — load the posted-invoice edit audit trail (best-effort; a missing table never breaks load)
   try{const er=await fetch(`${c.url}/rest/v1/invoice_edits?select=*`,{headers:dataHeaders()});if(er.ok){const ej=await er.json();if(Array.isArray(ej))DB.invoiceEdits=ej.map(TMAP.invoice_edits.from);}}catch(e){}
-  // v3.4 — audit events (best-effort; a missing table never breaks load). Newest 2000 by time.
-  try{const ar=await fetch(`${c.url}/rest/v1/audit_events?select=*&order=at_ms.desc&limit=2000`,{headers:dataHeaders()});if(ar.ok){const aj=await ar.json();if(Array.isArray(aj)){DB.auditLog=aj.map(TMAP.audit_events.from);DB.seqAudit=DB.auditLog.reduce((m,e)=>Math.max(m,e.id||0),0);}}}catch(e){}
+  // v3.4 — audit events (best-effort; a missing table never breaks load).
+  // Egress hotfix: hydrate only the newest 200 events at startup, while fetching the current max id separately
+  // so new audit writes keep a correct monotonic sequence without downloading older audit payloads.
+  try{
+    const [ar,air]=await Promise.all([
+      fetch(`${c.url}/rest/v1/audit_events?select=*&order=at_ms.desc&limit=200`,{headers:dataHeaders()}),
+      fetch(`${c.url}/rest/v1/audit_events?select=id&order=id.desc&limit=1`,{headers:dataHeaders()})
+    ]);
+    if(ar.ok){
+      const aj=await ar.json();
+      if(Array.isArray(aj))DB.auditLog=aj.map(TMAP.audit_events.from);
+    }
+    if(air.ok){
+      const aij=await air.json();
+      if(Array.isArray(aij)&&aij[0]&&aij[0].id!=null)DB.seqAudit=+aij[0].id||0;
+      else DB.seqAudit=(DB.auditLog||[]).reduce((m,e)=>Math.max(m,e.id||0),0);
+    }else{
+      DB.seqAudit=(DB.auditLog||[]).reduce((m,e)=>Math.max(m,e.id||0),0);
+    }
+  }catch(e){DB.seqAudit=(DB.auditLog||[]).reduce((m,e)=>Math.max(m,e.id||0),0);}
   ensureWarehouses();
   applySeqCounters();
   autoClearDueCheques();   // v3.4: clear any cloud-loaded cheques whose due date has passed (idempotent)
