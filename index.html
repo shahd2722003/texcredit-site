@@ -11315,10 +11315,14 @@ async function bulkExcApply(){
     }
     rebuild();persist();renderNav();
     for(const item of _bulkExc.results.filter(x=>x.status==='تم الحفظ والتحقق')){
-      const c=custById(item.id),re=bulkExcProjection(c,fresh.p);
-      if(Math.abs(re.totals.nc-fresh.groups.find(g=>g.id===item.id).totals.nc)>0.01||
-         Math.abs(re.totals.nb-fresh.groups.find(g=>g.id===item.id).totals.nb)>0.01){
-        item.status='الحفظ تم — فرق بالحسابات يستلزم مراجعة';item.reason='راجعي التقارير وأعيدي تحميل الصفحة قبل الاعتماد';
+      const allocations=DB.allocations.filter(a=>{const inv=invById(a.invoiceId);return inv&&+inv.customerId===+item.id;});
+      const txns=DB.commissionTxns.filter(t=>+t.customerId===+item.id);
+      const actualCommission=round(txns.reduce((sum,t)=>sum+(+t.commissionAmount||0),0),2);
+      const actualBonus=round(allocations.reduce((sum,a)=>sum+(+a.bonusAmount||0),0),2);
+      const expected=fresh.groups.find(g=>g.id===item.id).totals;
+      if(Math.abs(actualCommission-expected.nc)>0.01||Math.abs(actualBonus-expected.nb)>0.01){
+        item.status='الحفظ تم — فرق بالحسابات يستلزم مراجعة';
+        item.reason='المتوقع: '+bulkExcMoney(expected.nc+expected.nb)+'؛ الفعلي: '+bulkExcMoney(actualCommission+actualBonus)+'. راجعي التقارير قبل الاعتماد.';
       }
     }
     report();
